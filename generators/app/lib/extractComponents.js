@@ -1,5 +1,6 @@
 import path from "path";
 import fs from "fs";
+import { exec } from "child_process";
 
 export const extractComponent = (
   generator,
@@ -78,8 +79,50 @@ export const syncDependencies = (gen, absolutePaths, sourceRoot, targetDir) => {
       const relativePart = path.relative(sourceRoot, srcPath);
 
       // 3. Create the final destination path
-      const destPath = path.join(targetDir, relativePart);
+      let destPath = path.join(targetDir, relativePart);
+      let content = fs.readFileSync(srcPath, "utf8");
+      let isReactFile = false;
 
+      // --- Extension Logic ---
+      if (srcPath.endsWith(".js")) {
+        isReactFile =
+          /import.*React/i.test(content) ||
+          /<[A-Z]/.test(content) ||
+          /return\s*\(/.test(content);
+        if (isReactFile) {
+          destPath = destPath.replace(/\.js$/, ".jsx");
+        }
+      }
+      // 2. The Regex Import Renamer
+      // This regex looks for:
+      // - Strings starting with 'from' or 'import'
+      // - Followed by a quote (' or ")
+      // - Followed by a relative path (./ or ../)
+      // - Ending with .js before the closing quote
+      const importRegex = /(from|import)\s+(['"])((\.\.?\/)+.*)\.js(['"])/g;
+      // We only perform the replacement on JS/JSX files
+      if (srcPath.match(/\.(js|jsx)$/)) {
+        content = content.replace(importRegex, (match, p1, p2, p3, p4, p5) => {
+          // We check if the file being imported is one of the ones we are extracting
+          // For simplicity, we assume if it's a relative import, it needs the .jsx swap
+          return `${p1} ${p2}${p3}.jsx${p5}`;
+        });
+      }
+      // if (srcPath.match(/\.(js|jsx)$/)) {
+      //   content = content.replace(
+      //     /import\s+\{([^}]*ToastOptions[^}]*)\}\s+from\s+['"]react-hot-toast['"]/g,
+      //     (match, p1) => {
+      //       // Remove ToastOptions from the curly braces
+      //       const cleaned = p1
+      //         .split(",")
+      //         .filter((item) => !item.includes("ToastOptions"))
+      //         .join(",");
+      //       return cleaned.trim()
+      //         ? `import { ${cleaned} } from 'react-hot-toast'`
+      //         : `// Removed empty type import`;
+      //     },
+      //   );
+      // }
       // 4. Ensure destination folder exists
       const destFolder = path.dirname(destPath);
       if (!fs.existsSync(destFolder)) {
@@ -87,7 +130,8 @@ export const syncDependencies = (gen, absolutePaths, sourceRoot, targetDir) => {
       }
 
       // 5. Perform the copy
-      fs.copyFileSync(srcPath, destPath);
+      // We use writeFileSync instead of copyFileSync to save our modified content
+      fs.writeFileSync(destPath, content);
       copiedCount++;
     } catch (err) {
       gen.log.error(`Failed to copy ${srcPath}: ${err.message}`);
@@ -121,7 +165,41 @@ export const findCommonBase = (files) => {
   }
   return common.join(path.sep);
 };
-import { exec } from "child_process";
+
+/**
+ * Finds the nearest package.json and extracts versions for requested deps
+ * @param {string} startPath - Directory to start searching from
+ * @param {string[]} depNames - Array of package names to find
+ * @returns {Object} - Key/Value pair of package names and versions
+ */
+export const getSourceVersions = (startPath, depNames) => {
+  let currentDir = startPath;
+  let foundPath = null;
+
+  // 1. Climb up the tree to find the nearest package.json
+  while (currentDir !== path.parse(currentDir).root) {
+    const checkPath = path.join(currentDir, "package.json");
+    if (fs.existsSync(checkPath)) {
+      foundPath = checkPath;
+      break;
+    }
+    currentDir = path.dirname(currentDir);
+  }
+
+  if (!foundPath) return {};
+
+  const pkg = JSON.parse(fs.readFileSync(foundPath, "utf8"));
+  const allAvailable = { ...pkg.devDependencies, ...pkg.dependencies };
+
+  const results = {};
+  depNames.forEach((name) => {
+    if (allAvailable[name]) {
+      results[name] = allAvailable[name];
+    }
+  });
+
+  return results;
+};
 
 /**
  * Opens a folder in the native OS file explorer
