@@ -5,13 +5,14 @@ import commandExists from "command-exists";
 import os from "node:os";
 import madge from "madge";
 import path from "path";
-import fs from "fs";
+import fs, { rmSync } from "fs";
 
 import { saveMadgeReports } from "./lib/saveMadgeReports.js"; // Remember the .js!
 import {
   openExplorer,
   syncDependencies,
   findCommonBase,
+  getSourceVersions,
 } from "./lib/extractComponents.js";
 import { component } from "0g";
 
@@ -86,6 +87,12 @@ export default class extends Generator {
     const sourceRoot = path.dirname(sourcePath);
     const componentName = path.parse(sourcePath).name;
     const finalTarget = path.join(outputPath, componentName);
+    // Clean up previous extraction...
+    if (fs.existsSync(finalTarget)) {
+      this.log(`🧹 Cleaning up old extraction at ${finalTarget}...`);
+      // Recursive delete to ensure a fresh start
+      rmSync(finalTarget, { recursive: true, force: true });
+    }
 
     const baseName = path.parse(sourcePath).name;
     this.log(`🚀 Analyzing ${baseName}...`);
@@ -113,17 +120,54 @@ export default class extends Generator {
       // 2. Find the Common Ancestor (The "New Horizon")
       const commonBase = findCommonBase(absoluteList);
       this.log(`📍 Common Base identified: ${commonBase}`);
-      const relativeComponentPath = path
+      let relativeComponentPath = path
         .relative(commonBase, sourcePath)
         .replace(/\\/g, "/");
+
+      // Check if the source was a .js file that we likely renamed to .jsx
+      if (relativeComponentPath.endsWith(".js")) {
+        const content = fs.readFileSync(sourcePath, "utf8");
+        if (/<[A-Z]/.test(content) || /import.*React/i.test(content)) {
+          relativeComponentPath = relativeComponentPath.replace(
+            /\.js$/,
+            ".jsx",
+          );
+        }
+      }
 
       this.log(
         `📍 Relative Component Path identified: ${relativeComponentPath}`,
       );
+      const assetExtensions = [
+        ".css",
+        ".scss",
+        ".sass",
+        ".svg",
+        ".png",
+        ".jpg",
+      ];
+      const expandedList = new Set(absoluteList);
 
+      // Look for siblings of our JS dependencies
+      absoluteList.forEach((filePath) => {
+        const dir = path.dirname(filePath);
+        const siblings = fs.readdirSync(dir);
+
+        siblings.forEach((file) => {
+          const ext = path.extname(file).toLowerCase();
+          if (assetExtensions.includes(ext)) {
+            expandedList.add(path.resolve(dir, file));
+          }
+        });
+      });
+
+      const finalCopyList = Array.from(expandedList);
+      this.log(
+        `🎨 Added ${finalCopyList.length - absoluteList.length} assets (CSS/SVGs) to the queue.`,
+      );
       // 3. Sync using the commonBase as the anchor
       // This prevents the ../../ from ever leaving the finalTarget folder
-      syncDependencies(this, absoluteList, commonBase, finalTarget);
+      syncDependencies(this, finalCopyList, commonBase, finalTarget);
 
       await saveMadgeReports(res, finalTarget, componentName);
 
@@ -131,39 +175,59 @@ export default class extends Generator {
       // =============================================
       // Populate sandbox components
       // =============================================
-      if (this.createSandBox) {
+      if (this.answers.createSandBox) {
         this.log(`✅ Copying templates: ${componentName}`);
-        this.packageJson.merge({
-          name: `sandbox-${componentName}`,
-          dependencies: {
-            react: "^18.2.0",
-            "react-dom": "^18.2.0",
-            // Dynamically add more from the source project if needed
-          },
-          scripts: {
-            dev: "vite",
-            storybook: "storybook dev -p 6006",
-          },
-        });
+        const peerDepsToSync = [
+          "react",
+          "react-dom",
+          "react-datepicker",
+          "react-select",
+          "react-router",
+          "prop-types",
+          "date-fns",
+          "lucide-react",
+          "@mui/material",
+          "framer-motion",
+          "styled-components",
+          "lodash",
+          "react-hot-toast",
+        ];
+        // Grab the actual versions from your D: drive
+        const syncedVersions = getSourceVersions(
+          path.dirname(sourcePath),
+          peerDepsToSync,
+        );
+
+        // Merge with your defaults (fallback to 18.2.0 if not found)
+        const finalDeps = {
+          react: syncedVersions["react"] || "^18.2.0",
+          "react-dom": syncedVersions["react-dom"] || "^18.2.0",
+          ...syncedVersions,
+        };
+
         this.log(
-          `Source Template: ${this.templatePath("sandbox/package.json")}`,
+          `📦 Synced ${Object.keys(syncedVersions).length} peer dependencies from source.`,
         );
-        this.log(`Destination: ${path.join(finalTarget, "package.json")}`);
-
-        this.fs.copyTpl(
-          this.templatePath("Component.stories.jsx"),
-          path.join(finalTarget, `${componentName}.stories.jsx`),
-          {
-            componentName,
-            importPath: `./${relativeComponentPath}`, // Point to the extracted location
-          },
-        );
-
-        // Copy the sandbox boilerplate
+        // Pass finalDeps to the Template
         this.fs.copyTpl(
           this.templatePath("sandbox/package.json"),
           path.join(finalTarget, "package.json"),
-          { componentName },
+          {
+            componentName,
+            dependenciesJSON: JSON.stringify(finalDeps, null, 2).replace(
+              /\n/g,
+              "\n    ",
+            ),
+          },
+        );
+
+        this.fs.copyTpl(
+          this.templatePath("sandbox/Component.stories.jsx"),
+          path.join(finalTarget, `${componentName}.stories.jsx`),
+          {
+            componentName,
+            relativeComponentPath, // Point to the extracted location
+          },
         );
 
         this.fs.copyTpl(
@@ -177,24 +241,67 @@ export default class extends Generator {
           { componentName, relativeComponentPath },
         );
 
+        // Define the storybook config directory
+        const sbConfigDir = path.join(finalTarget, ".storybook");
+
+        // Copy main.js
+        this.fs.copyTpl(
+          this.templatePath("sandbox/.storybook/main.js"),
+          path.join(sbConfigDir, "main.js"),
+        );
+
+        // Copy preview.js
+        this.fs.copyTpl(
+          this.templatePath("sandbox/.storybook/preview.js"),
+          path.join(sbConfigDir, "preview.js"),
+        );
+
+        // Readme.md file
+        this.fs.copyTpl(
+          this.templatePath("sandbox/README.md"),
+          path.join(finalTarget, "README.md"),
+          {
+            componentName,
+            sourcePath: this.answers.sourcePath, // The D: drive path
+            commonBase, // The anchor point
+            relativeComponentPath,
+          },
+        );
         await this.fs.commit(); // Forces Yeoman to write templates to disk NOW
       }
     } catch (err) {
       this.log.error(`Failed to process reports: ${err.message}`);
     }
   }
+  async install() {
+    if (this.answers.createSandBox) {
+      console.log("Installing dependencies, please wait...");
+      const componentName = path.parse(this.answers.sourcePath).name;
+      const finalTarget = path.join(this.answers.outputPath, componentName);
+
+      this.log(`\n📦 Running npm install in ${finalTarget}...`);
+
+      // We use spawnSync to ensure it finishes before the 'end' phase
+      this.spawnSync("npm", ["install"], {
+        cwd: finalTarget,
+      });
+    }
+  }
   async end() {
-    const finalPath = path.join(
-      this.answers.outputPath,
-      path.parse(this.answers.sourcePath).name,
-    );
+    const componentName = path.parse(this.answers.sourcePath).name;
+    const finalPath = path.join(this.answers.outputPath, componentName);
 
-    this.log("\n------------------------------------------");
-    this.log("🎉 Extraction Complete!");
-    this.log(`📁 Files are located at: ${finalPath}`);
-    this.log("------------------------------------------\n");
+    this.log("\n" + "=".repeat(40));
+    this.log("🚀 SANDBOX READY!");
+    this.log("=".repeat(40));
+    this.log(`📍 Location: ${finalPath}`);
 
-    // open the folder for the user if requested
+    if (this.answers.createSandBox) {
+      this.log(`\nTo start your component, run:`);
+      this.log(`1. cd "${finalPath}"`);
+      this.log(`2. npm run storybook   <-- View component in isolation`);
+      this.log(`3. npm run dev         <-- View raw Vite app`);
+    } // open the folder for the user if requested
     if (this.answers.openExplorer) openExplorer(finalPath);
   }
 }

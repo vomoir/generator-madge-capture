@@ -4,6 +4,10 @@ import path from "path";
 
 export default defineConfig({
   plugins: [react()],
+  optimizeDeps: {
+    // Force Vite to pre-bundle these even if it's confused by the imports
+    include: ["react-hot-toast", "prop-types"],
+  },
   resolve: {
     alias: {
       // If your monorepo uses aliases (e.g. '@utils'),
