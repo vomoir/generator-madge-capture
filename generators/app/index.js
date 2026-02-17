@@ -41,8 +41,8 @@ export default class extends Generator {
       this.log("Madge not found. Adding to dependencies...");
     }
     const homeDir = os.homedir(); // ← "C:\Users\<USERNAME>"
-    const captureFolder = "madge-capture"; // ← "C:\Users\<USERNAME>\madge-capture"
-    this.destinationRoot(path.join(homeDir, captureFolder));
+    const defaultCaptureBase = path.join(homeDir, "madge-capture");
+
     this.answers = await this.prompt([
       {
         type: "input",
@@ -52,10 +52,37 @@ export default class extends Generator {
         store: true,
       },
       {
+        type: "list",
+        name: "mode",
+        message: "How do you want to export this component?",
+        choices: [
+          { name: "Create a new Sandbox Project", value: "new" },
+          { name: "Add to an existing Storybook Project", value: "existing" },
+        ],
+        default: "new",
+        store: true,
+      },
+      {
         type: "input",
         name: "outputPath",
         message: "Where do you want to save the output files?",
-        default: this.destinationPath(),
+        default: defaultCaptureBase,
+        when: (answers) => answers.mode === "new",
+        store: true,
+      },
+      {
+        type: "input",
+        name: "existingProjectPath",
+        message: "Enter the root path of your existing project:",
+        when: (answers) => answers.mode === "existing",
+        store: true,
+      },
+      {
+        type: "input",
+        name: "componentSubDir",
+        message: "Sub-directory for the component (relative to project root):",
+        default: "src/components",
+        when: (answers) => answers.mode === "existing",
         store: true,
       },
       {
@@ -63,6 +90,7 @@ export default class extends Generator {
         name: "createSandBox",
         message: "Create sandbox files to run in StoryBoard?",
         default: true,
+        when: (answers) => answers.mode === "new",
         store: true,
       },
       {
@@ -76,7 +104,7 @@ export default class extends Generator {
   }
 
   async writing() {
-    const { sourcePath, outputPath } = this.answers;
+    const { sourcePath, mode } = this.answers;
 
     // Validate existence
     if (!fs.existsSync(sourcePath)) {
@@ -84,9 +112,19 @@ export default class extends Generator {
       return;
     }
 
-    const sourceRoot = path.dirname(sourcePath);
     const componentName = path.parse(sourcePath).name;
-    const finalTarget = path.join(outputPath, componentName);
+    let finalTarget;
+
+    if (mode === "existing") {
+      finalTarget = path.join(
+        this.answers.existingProjectPath,
+        this.answers.componentSubDir,
+        componentName,
+      );
+    } else {
+      finalTarget = path.join(this.answers.outputPath, componentName);
+    }
+
     // Clean up previous extraction...
     if (fs.existsSync(finalTarget)) {
       this.log(`🧹 Cleaning up old extraction at ${finalTarget}...`);
@@ -171,11 +209,14 @@ export default class extends Generator {
 
       await saveMadgeReports(res, finalTarget, componentName);
 
-      this.log(`✅ Reports saved to: ${outputPath}`);
+      this.log(`✅ Reports saved to: ${finalTarget}`);
       // =============================================
       // Populate sandbox components
       // =============================================
-      if (this.answers.createSandBox) {
+      const shouldGenerateTemplates =
+        (mode === "new" && this.answers.createSandBox) || mode === "existing";
+
+      if (shouldGenerateTemplates) {
         this.log(`✅ Copying templates: ${componentName}`);
         const peerDepsToSync = [
           "react",
@@ -208,18 +249,59 @@ export default class extends Generator {
         this.log(
           `📦 Synced ${Object.keys(syncedVersions).length} peer dependencies from source.`,
         );
-        // Pass finalDeps to the Template
-        this.fs.copyTpl(
-          this.templatePath("sandbox/package.json"),
-          path.join(finalTarget, "package.json"),
-          {
-            componentName,
-            dependenciesJSON: JSON.stringify(finalDeps, null, 2).replace(
-              /\n/g,
-              "\n    ",
-            ),
-          },
-        );
+
+        if (mode === "new") {
+          // Pass finalDeps to the Template
+          this.fs.copyTpl(
+            this.templatePath("sandbox/package.json"),
+            path.join(finalTarget, "package.json"),
+            {
+              componentName,
+              dependenciesJSON: JSON.stringify(finalDeps, null, 2).replace(
+                /\n/g,
+                "\n    ",
+              ),
+            },
+          );
+
+          this.fs.copyTpl(
+            this.templatePath("sandbox/vite.config.js"),
+            path.join(finalTarget, "vite.config.js"),
+          );
+
+          this.fs.copyTpl(
+            this.templatePath("sandbox/index.html"),
+            path.join(finalTarget, "index.html"),
+            { componentName, relativeComponentPath },
+          );
+
+          // Define the storybook config directory
+          const sbConfigDir = path.join(finalTarget, ".storybook");
+
+          // Copy main.js
+          this.fs.copyTpl(
+            this.templatePath("sandbox/.storybook/main.js"),
+            path.join(sbConfigDir, "main.js"),
+          );
+
+          // Copy preview.js
+          this.fs.copyTpl(
+            this.templatePath("sandbox/.storybook/preview.js"),
+            path.join(sbConfigDir, "preview.js"),
+          );
+
+          // Readme.md file
+          this.fs.copyTpl(
+            this.templatePath("sandbox/README.md"),
+            path.join(finalTarget, "README.md"),
+            {
+              componentName,
+              sourcePath: this.answers.sourcePath, // The D: drive path
+              commonBase, // The anchor point
+              relativeComponentPath,
+            },
+          );
+        }
 
         this.fs.copyTpl(
           this.templatePath("sandbox/Component.stories.jsx"),
@@ -230,43 +312,6 @@ export default class extends Generator {
           },
         );
 
-        this.fs.copyTpl(
-          this.templatePath("sandbox/vite.config.js"),
-          path.join(finalTarget, "vite.config.js"),
-        );
-
-        this.fs.copyTpl(
-          this.templatePath("sandbox/index.html"),
-          path.join(finalTarget, "index.html"),
-          { componentName, relativeComponentPath },
-        );
-
-        // Define the storybook config directory
-        const sbConfigDir = path.join(finalTarget, ".storybook");
-
-        // Copy main.js
-        this.fs.copyTpl(
-          this.templatePath("sandbox/.storybook/main.js"),
-          path.join(sbConfigDir, "main.js"),
-        );
-
-        // Copy preview.js
-        this.fs.copyTpl(
-          this.templatePath("sandbox/.storybook/preview.js"),
-          path.join(sbConfigDir, "preview.js"),
-        );
-
-        // Readme.md file
-        this.fs.copyTpl(
-          this.templatePath("sandbox/README.md"),
-          path.join(finalTarget, "README.md"),
-          {
-            componentName,
-            sourcePath: this.answers.sourcePath, // The D: drive path
-            commonBase, // The anchor point
-            relativeComponentPath,
-          },
-        );
         await this.fs.commit(); // Forces Yeoman to write templates to disk NOW
       }
     } catch (err) {
@@ -274,7 +319,7 @@ export default class extends Generator {
     }
   }
   async install() {
-    if (this.answers.createSandBox) {
+    if (this.answers.mode === "new" && this.answers.createSandBox) {
       console.log("Installing dependencies, please wait...");
       const componentName = path.parse(this.answers.sourcePath).name;
       const finalTarget = path.join(this.answers.outputPath, componentName);
@@ -289,19 +334,33 @@ export default class extends Generator {
   }
   async end() {
     const componentName = path.parse(this.answers.sourcePath).name;
-    const finalPath = path.join(this.answers.outputPath, componentName);
+    let finalPath;
+    if (this.answers.mode === "existing") {
+      finalPath = path.join(
+        this.answers.existingProjectPath,
+        this.answers.componentSubDir,
+        componentName,
+      );
+    } else {
+      finalPath = path.join(this.answers.outputPath, componentName);
+    }
 
     this.log("\n" + "=".repeat(40));
-    this.log("🚀 SANDBOX READY!");
+    this.log("🚀 EXTRACTION COMPLETE!");
     this.log("=".repeat(40));
     this.log(`📍 Location: ${finalPath}`);
 
-    if (this.answers.createSandBox) {
+    if (this.answers.mode === "new" && this.answers.createSandBox) {
       this.log(`\nTo start your component, run:`);
       this.log(`1. cd "${finalPath}"`);
       this.log(`2. npm run storybook   <-- View component in isolation`);
       this.log(`3. npm run dev         <-- View raw Vite app`);
-    } // open the folder for the user if requested
+    } else if (this.answers.mode === "existing") {
+      this.log(`\nComponent added to existing project.`);
+      this.log(`You may need to install missing dependencies manually.`);
+    }
+
+    // open the folder for the user if requested
     if (this.answers.openExplorer) openExplorer(finalPath);
   }
 }
