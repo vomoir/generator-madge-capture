@@ -66,19 +66,19 @@ export const syncDependencies = (gen, absolutePaths, sourceRoot, targetDir) => {
 
   absolutePaths.forEach((srcPath) => {
     try {
-      // 1. Check if file exists
+      // Check if file exists
       if (!fs.existsSync(srcPath)) {
         gen.log.error(`File missing (skipped): ${srcPath}`);
         missingCount++;
         return;
       }
 
-      // 2. Determine relative path from the source component
+      // Determine relative path from the source component
       // e.g., if sourceRoot is .../Form and srcPath is .../utils/date.js
       // relativePart will be "../../utils/date.js"
       const relativePart = path.relative(sourceRoot, srcPath);
 
-      // 3. Create the final destination path
+      // Create the final destination path
       let destPath = path.join(targetDir, relativePart);
       let content = fs.readFileSync(srcPath, "utf8");
       let isReactFile = false;
@@ -93,7 +93,7 @@ export const syncDependencies = (gen, absolutePaths, sourceRoot, targetDir) => {
           destPath = destPath.replace(/\.js$/, ".jsx");
         }
       }
-      // 2. The Regex Import Renamer
+      // The Regex Import Renamer
       // This regex looks for:
       // - Strings starting with 'from' or 'import'
       // - Followed by a quote (' or ")
@@ -108,28 +108,13 @@ export const syncDependencies = (gen, absolutePaths, sourceRoot, targetDir) => {
           return `${p1} ${p2}${p3}.jsx${p5}`;
         });
       }
-      // if (srcPath.match(/\.(js|jsx)$/)) {
-      //   content = content.replace(
-      //     /import\s+\{([^}]*ToastOptions[^}]*)\}\s+from\s+['"]react-hot-toast['"]/g,
-      //     (match, p1) => {
-      //       // Remove ToastOptions from the curly braces
-      //       const cleaned = p1
-      //         .split(",")
-      //         .filter((item) => !item.includes("ToastOptions"))
-      //         .join(",");
-      //       return cleaned.trim()
-      //         ? `import { ${cleaned} } from 'react-hot-toast'`
-      //         : `// Removed empty type import`;
-      //     },
-      //   );
-      // }
-      // 4. Ensure destination folder exists
+      // Ensure destination folder exists
       const destFolder = path.dirname(destPath);
       if (!fs.existsSync(destFolder)) {
         fs.mkdirSync(destFolder, { recursive: true });
       }
 
-      // 5. Perform the copy
+      // Perform the copy
       // We use writeFileSync instead of copyFileSync to save our modified content
       fs.writeFileSync(destPath, content);
       copiedCount++;
