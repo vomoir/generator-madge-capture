@@ -1,7 +1,6 @@
 import Generator from "yeoman-generator";
 import chalk from "chalk";
 import yosay from "yosay";
-import commandExists from "command-exists";
 import os from "node:os";
 import madge from "madge";
 import path from "path";
@@ -15,7 +14,6 @@ import {
   getSourceVersions,
 } from "./lib/extractComponents.js";
 import { getPrompts } from "./lib/prompts.js";
-import { component } from "0g";
 
 export default class extends Generator {
   initializing() {}
@@ -34,13 +32,6 @@ export default class extends Generator {
           chalk.whiteBright(msgText),
       ),
     );
-    // Don't really need this as madge is added to
-    // dependencies in package.json.
-    if (commandExists("madge")) {
-      this.log("Madge already installed!");
-    } else {
-      this.log("Madge not found. Adding to dependencies...");
-    }
     const homeDir = os.homedir(); // ← "C:\Users\<USERNAME>"
     const defaultCaptureBase = path.join(homeDir, "madge-capture");
 

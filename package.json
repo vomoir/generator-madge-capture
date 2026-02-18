@@ -1,6 +1,6 @@
 {
   "name": "generator-madge-capture",
-  "version": "1.0.4",
+  "version": "1.0.9",
   "description": "Capture madge output for a given file",
   "author": {
     "name": "Tony Edwards",
@@ -22,14 +22,17 @@
     "create",
     "boilerplate"
   ],
-  "repository": "github:vomoir/generator-madge-capture.git",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vomoir/generator-madge-capture.git"
+  },
   "license": "ISC",
   "dependencies": {
     "chalk": "^4.0.0",
     "command-exists": "^1.2.9",
     "yeoman-generator": "^6.0.0",
     "yosay": "^2.0.2",
-    "madge": "^8.0.0"  
+    "madge": "^8.0.0"
   },
   "eslintConfig": {
     "extends": [
