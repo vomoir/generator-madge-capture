@@ -14,6 +14,7 @@ import {
   findCommonBase,
   getSourceVersions,
 } from "./lib/extractComponents.js";
+import { getPrompts } from "./lib/prompts.js";
 import { component } from "0g";
 
 export default class extends Generator {
@@ -43,64 +44,7 @@ export default class extends Generator {
     const homeDir = os.homedir(); // ← "C:\Users\<USERNAME>"
     const defaultCaptureBase = path.join(homeDir, "madge-capture");
 
-    this.answers = await this.prompt([
-      {
-        type: "input",
-        name: "sourcePath",
-        message: "Enter the location of the component:",
-        default: "D:\\Web.Application\\React\\Components\\Form.js",
-        store: true,
-      },
-      {
-        type: "list",
-        name: "mode",
-        message: "How do you want to export this component?",
-        choices: [
-          { name: "Create a new Sandbox Project", value: "new" },
-          { name: "Add to an existing Storybook Project", value: "existing" },
-        ],
-        default: "new",
-        store: true,
-      },
-      {
-        type: "input",
-        name: "outputPath",
-        message: "Where do you want to save the output files?",
-        default: defaultCaptureBase,
-        when: (answers) => answers.mode === "new",
-        store: true,
-      },
-      {
-        type: "input",
-        name: "existingProjectPath",
-        message: "Enter the root path of your existing project:",
-        when: (answers) => answers.mode === "existing",
-        store: true,
-      },
-      {
-        type: "input",
-        name: "componentSubDir",
-        message: "Sub-directory for the component (relative to project root):",
-        default: "src/components",
-        when: (answers) => answers.mode === "existing",
-        store: true,
-      },
-      {
-        type: "confirm",
-        name: "createSandBox",
-        message: "Create sandbox files to run in StoryBoard?",
-        default: true,
-        when: (answers) => answers.mode === "new",
-        store: true,
-      },
-      {
-        type: "confirm",
-        name: "openExplorer",
-        message: "Open explorer to show copied files?",
-        default: true,
-        store: true,
-      },
-    ]);
+    this.answers = await this.prompt(getPrompts(defaultCaptureBase));
   }
 
   async writing() {
@@ -132,8 +76,7 @@ export default class extends Generator {
       rmSync(finalTarget, { recursive: true, force: true });
     }
 
-    const baseName = path.parse(sourcePath).name;
-    this.log(`🚀 Analyzing ${baseName}...`);
+    this.log(`🚀 Analyzing ${componentName}...`);
     // =============================================
     // Run Madge
     // =============================================
@@ -349,6 +292,7 @@ export default class extends Generator {
     this.log("🚀 EXTRACTION COMPLETE!");
     this.log("=".repeat(40));
     this.log(`📍 Location: ${finalPath}`);
+    this.log("=".repeat(40));
 
     if (this.answers.mode === "new" && this.answers.createSandBox) {
       this.log(`\nTo start your component, run:`);
@@ -357,6 +301,10 @@ export default class extends Generator {
       this.log(`3. npm run dev         <-- View raw Vite app`);
     } else if (this.answers.mode === "existing") {
       this.log(`\nComponent added to existing project.`);
+      this.log(`You may need to install missing dependencies manually.`);
+    } else if (this.answers.mode === "dependency_only") {
+      this.log(`To view your component:`);
+      this.log(`→   cd "${finalPath}"`);
       this.log(`You may need to install missing dependencies manually.`);
     }
 
