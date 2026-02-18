@@ -35,7 +35,12 @@ export default class extends Generator {
     const homeDir = os.homedir(); // ← "C:\Users\<USERNAME>"
     const defaultCaptureBase = path.join(homeDir, "madge-capture");
 
-    this.answers = await this.prompt(getPrompts(defaultCaptureBase));
+    try {
+      this.answers = await this.prompt(getPrompts(defaultCaptureBase));
+    } catch (e) {
+      this.log("\n👋 Goodbye! Generator cancelled.");
+      process.exit(0);
+    }
   }
 
   async writing() {
