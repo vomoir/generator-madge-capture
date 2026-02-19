@@ -69,7 +69,18 @@ export default class extends Generator {
     if (fs.existsSync(finalTarget)) {
       this.log(`🧹 Cleaning up old extraction at ${finalTarget}...`);
       // Recursive delete to ensure a fresh start
-      rmSync(finalTarget, { recursive: true, force: true });
+      try {
+        rmSync(finalTarget, { recursive: true, force: true });
+      } catch (err) {
+        this.log.error(`\n❌ Could not clean up ${finalTarget}`);
+        this.log.error(`   ${err.message}`);
+        if (err.code === "EPERM" || err.code === "EACCES") {
+          this.log.error(
+            "   💡 You may not have write permissions for this folder.",
+          );
+        }
+        process.exit(1);
+      }
     }
 
     this.log(`🚀 Analyzing ${componentName}...`);
@@ -254,6 +265,14 @@ export default class extends Generator {
         await this.fs.commit(); // Forces Yeoman to write templates to disk NOW
       }
     } catch (err) {
+      if (err.code === "EPERM" || err.code === "EACCES") {
+        this.log.error(`\n❌ Permission denied while writing files!`);
+        this.log.error(`   Destination: ${finalTarget}`);
+        this.log.error(
+          "   💡 Please check you have write access to this location.",
+        );
+        process.exit(1);
+      }
       this.log.error(`Failed to process reports: ${err.message}`);
     }
   }

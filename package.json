@@ -1,6 +1,6 @@
 {
   "name": "generator-madge-capture",
-  "version": "1.0.9",
+  "version": "1.0.11",
   "description": "Capture madge output for a given file",
   "author": {
     "name": "Tony Edwards",
