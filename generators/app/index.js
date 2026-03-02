@@ -10,6 +10,7 @@ import { saveMadgeReports } from "./lib/saveMadgeReports.js"; // Remember the .j
 import {
   openExplorer,
   syncDependencies,
+  rewriteImportsInDirectory,
   findCommonBase,
   getSourceVersions,
   getSourceAliases,
@@ -369,6 +370,11 @@ export default class extends Generator {
         }
 
         await this.fs.commit(); // Forces Yeoman to write templates to disk NOW
+
+        // Post-process: Rewrite imports in the entire extraction directory
+        // to catch any templates or files that weren't caught by syncDependencies
+        this.log(`✨ Post-processing imports in ${extractionDir}...`);
+        rewriteImportsInDirectory(this, extractionDir, aliasMap);
       }
     } catch (err) {
       if (err.code === "EPERM" || err.code === "EACCES") {

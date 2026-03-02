@@ -149,8 +149,8 @@ export const syncDependencies = (
         }
       }
 
-      // Matches relative imports like ./file or ../../file
-      const importRegex = /(from|import)\s+(['"])((\.\.?\/)+[^'"]*)(['"])/g;
+      // Matches relative imports like ./file, ../../file or direct relative paths
+      const importRegex = /(from|import|export)\s+(['"])((\.\.?\/)+[^'"]*)(['"])/g;
 
       if (srcPath.match(/\.(js|jsx)$/)) {
         const currentFileDir = path.dirname(relativePart);
@@ -192,6 +192,49 @@ export const syncDependencies = (
   gen.log(`\nFinal Sync Report:`);
   gen.log(`✅ Copied: ${copiedCount}`);
   if (missingCount > 0) gen.log(`⚠️ Missing: ${missingCount}`);
+};
+
+/**
+ * Recursively walks a directory and rewrites imports in JS/JSX files
+ * @param {Generator} gen 
+ * @param {string} directory 
+ * @param {Object} aliasMap 
+ */
+export const rewriteImportsInDirectory = (gen, directory, aliasMap) => {
+  if (Object.keys(aliasMap).length === 0) return;
+
+  const files = fs.readdirSync(directory);
+
+  files.forEach((file) => {
+    const fullPath = path.join(directory, file);
+    if (fs.lstatSync(fullPath).isDirectory()) {
+      rewriteImportsInDirectory(gen, fullPath, aliasMap);
+    } else if (fullPath.match(/\.(js|jsx)$/)) {
+      let content = fs.readFileSync(fullPath, "utf8");
+      const relativeToTargetRoot = path.relative(directory, fullPath).replace(/\\/g, "/");
+      const currentFileDir = path.dirname(relativeToTargetRoot);
+
+      const importRegex = /(from|import|export)\s+(['"])((\.\.?\/)+[^'"]*)(['"])/g;
+
+      const newContent = content.replace(importRegex, (match, p1, p2, p3, p4, p5) => {
+        let importPath = p3;
+        
+        // Resolve the import path relative to the current file
+        const normalizedResolvedPath = path.posix.normalize(path.posix.join(currentFileDir, importPath));
+
+        const aliased = tryAlias(normalizedResolvedPath, aliasMap);
+        if (aliased) {
+          return `${p1} ${p2}${aliased}${p5}`;
+        }
+
+        return match;
+      });
+
+      if (newContent !== content) {
+        fs.writeFileSync(fullPath, newContent);
+      }
+    }
+  });
 };
 
 /**
