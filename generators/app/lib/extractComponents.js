@@ -149,18 +149,29 @@ export const syncDependencies = (
         }
       }
 
-      // Matches relative imports like ./file, ../../file or direct relative paths
-      const importRegex = /(from|import|export)\s+(['"])((\.\.?\/)+[^'"]*)(['"])/g;
+      // Matches any import/export from a string literal
+      const importRegex = /(from|import|export)\s+(['"])([^'"]+)(['"])/g;
 
       if (srcPath.match(/\.(js|jsx)$/)) {
         const currentFileDir = path.dirname(relativePart);
 
-        content = content.replace(importRegex, (match, p1, p2, p3, p4, p5) => {
+        content = content.replace(importRegex, (match, p1, p2, p3, p4) => {
           let importPath = p3;
+
+          // We only want to rewrite relative paths
+          if (!importPath.startsWith("./") && !importPath.startsWith("../")) {
+            return match;
+          }
 
           // rename .js files to .jsx if we converted them earlier
           if (importPath.endsWith(".js")) {
-            importPath = importPath.replace(/\.js$/, ".jsx");
+            const resolvedAbs = path.resolve(path.dirname(srcPath), importPath);
+            if (fs.existsSync(resolvedAbs)) {
+                const subContent = fs.readFileSync(resolvedAbs, "utf8");
+                if (/<[A-Z]/.test(subContent) || /import.*React/i.test(subContent)) {
+                    importPath = importPath.replace(/\.js$/, ".jsx");
+                }
+            }
           }
 
           // Resolve the import path relative to the current file to get the path relative to commonBase
@@ -168,10 +179,10 @@ export const syncDependencies = (
 
           const aliased = tryAlias(normalizedResolvedPath, aliasMap);
           if (aliased) {
-            return `${p1} ${p2}${aliased}${p5}`;
+            return `${p1} ${p2}${aliased}${p4}`;
           }
 
-          return `${p1} ${p2}${importPath}${p5}`;
+          return `${p1} ${p2}${importPath}${p4}`;
         });
       }
 
@@ -214,17 +225,22 @@ export const rewriteImportsInDirectory = (gen, directory, aliasMap) => {
       const relativeToTargetRoot = path.relative(directory, fullPath).replace(/\\/g, "/");
       const currentFileDir = path.dirname(relativeToTargetRoot);
 
-      const importRegex = /(from|import|export)\s+(['"])((\.\.?\/)+[^'"]*)(['"])/g;
+      const importRegex = /(from|import|export)\s+(['"])([^'"]+)(['"])/g;
 
-      const newContent = content.replace(importRegex, (match, p1, p2, p3, p4, p5) => {
+      const newContent = content.replace(importRegex, (match, p1, p2, p3, p4) => {
         let importPath = p3;
         
+        // We only want to rewrite relative paths
+        if (!importPath.startsWith("./") && !importPath.startsWith("../")) {
+            return match;
+        }
+
         // Resolve the import path relative to the current file
         const normalizedResolvedPath = path.posix.normalize(path.posix.join(currentFileDir, importPath));
 
         const aliased = tryAlias(normalizedResolvedPath, aliasMap);
         if (aliased) {
-          return `${p1} ${p2}${aliased}${p5}`;
+          return `${p1} ${p2}${aliased}${p4}`;
         }
 
         return match;
@@ -243,6 +259,8 @@ export const rewriteImportsInDirectory = (gen, directory, aliasMap) => {
 export const findCommonBase = (files) => {
   if (files.length === 0) return "";
 
+  const isWin = process.platform === "win32";
+
   // Split paths into segments
   const splitPaths = files.map((f) => f.split(path.sep));
   let common = splitPaths[0];
@@ -252,7 +270,9 @@ export const findCommonBase = (files) => {
     while (
       j < common.length &&
       j < splitPaths[i].length &&
-      common[j] === splitPaths[i][j]
+      (isWin 
+        ? common[j].toLowerCase() === splitPaths[i][j].toLowerCase() 
+        : common[j] === splitPaths[i][j])
     ) {
       j++;
     }

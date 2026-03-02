@@ -55,21 +55,6 @@ export const getPrompts = (defaultCaptureBase) => [
   },
   {
     type: "confirm",
-    name: "autoDetectAliases",
-    message: "Try to auto-detect aliases from jsconfig.json/tsconfig.json?",
-    default: true,
-    store: true,
-  },
-  {
-    type: "input",
-    name: "aliases",
-    message:
-      "Enter any additional path aliases (comma-separated, e.g., @/ = src, @Components = src/Components):",
-    default: "",
-    store: true,
-  },
-  {
-    type: "confirm",
     name: "openExplorer",
     message: "Open explorer to show copied files?",
     default: true,
