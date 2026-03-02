@@ -80,6 +80,7 @@ const tryAlias = (normalizedPath, aliasMap) => {
 
       // Construct the new aliased path
       let newImport = alias;
+      
       if (remaining) {
         // If alias ends with /, don't add another /
         if (newImport.endsWith("/")) {
@@ -89,13 +90,14 @@ const tryAlias = (normalizedPath, aliasMap) => {
         }
       }
 
-      // Clean up any double slashes from @//
-      newImport = newImport.replace(/\/+/g, "/").replace(/\/$/, "");
+      // Clean up any double slashes from @// (except for @/)
+      if (newImport !== "@/") {
+          newImport = newImport.replace(/\/+/g, "/");
+      }
       
-      // Special case for @/ which usually doesn't need a / if remaining starts with one
-      // but we normalized remaining to NOT start with /
-      if (alias === "@/" && !newImport.startsWith("@/")) {
-        newImport = "@/" + newImport.replace(/^@/, "");
+      // Ensure it doesn't end with a slash unless it's just the alias itself
+      if (newImport.length > alias.length && newImport.endsWith("/")) {
+          newImport = newImport.slice(0, -1);
       }
 
       return newImport;
@@ -149,8 +151,9 @@ export const syncDependencies = (
         }
       }
 
-      // Matches any import/export from a string literal
-      const importRegex = /(from|import|export)\s+(['"])([^'"]+)(['"])/g;
+      // Matches any import/export from a string literal. 
+      // The [\s\S]*? handles potential multiline between import/export/from and the path
+      const importRegex = /(from|import|export)[\s\S]*?(['"])([^'"]+)(['"])/g;
 
       if (srcPath.match(/\.(js|jsx)$/)) {
         const currentFileDir = path.dirname(relativePart);
@@ -208,24 +211,24 @@ export const syncDependencies = (
 /**
  * Recursively walks a directory and rewrites imports in JS/JSX files
  * @param {Generator} gen 
- * @param {string} directory 
+ * @param {string} rootDirectory - The base directory to resolve everything relative to
+ * @param {string} currentDir - The current directory being walked
  * @param {Object} aliasMap 
  */
-export const rewriteImportsInDirectory = (gen, directory, aliasMap) => {
-  if (Object.keys(aliasMap).length === 0) return;
-
-  const files = fs.readdirSync(directory);
+const rewriteRecursive = (gen, rootDirectory, currentDir, aliasMap) => {
+  const files = fs.readdirSync(currentDir);
 
   files.forEach((file) => {
-    const fullPath = path.join(directory, file);
+    const fullPath = path.join(currentDir, file);
     if (fs.lstatSync(fullPath).isDirectory()) {
-      rewriteImportsInDirectory(gen, fullPath, aliasMap);
+      rewriteRecursive(gen, rootDirectory, fullPath, aliasMap);
     } else if (fullPath.match(/\.(js|jsx)$/)) {
       let content = fs.readFileSync(fullPath, "utf8");
-      const relativeToTargetRoot = path.relative(directory, fullPath).replace(/\\/g, "/");
-      const currentFileDir = path.dirname(relativeToTargetRoot);
+      
+      const relativeToFile = path.relative(rootDirectory, fullPath).replace(/\\/g, "/");
+      const relativeToRoot = path.dirname(relativeToFile);
 
-      const importRegex = /(from|import|export)\s+(['"])([^'"]+)(['"])/g;
+      const importRegex = /(from|import|export)[\s\S]*?(['"])([^'"]+)(['"])/g;
 
       const newContent = content.replace(importRegex, (match, p1, p2, p3, p4) => {
         let importPath = p3;
@@ -235,8 +238,8 @@ export const rewriteImportsInDirectory = (gen, directory, aliasMap) => {
             return match;
         }
 
-        // Resolve the import path relative to the current file
-        const normalizedResolvedPath = path.posix.normalize(path.posix.join(currentFileDir, importPath));
+        // Resolve the import path relative to the current file (relative to rootDirectory)
+        const normalizedResolvedPath = path.posix.normalize(path.posix.join(relativeToRoot, importPath));
 
         const aliased = tryAlias(normalizedResolvedPath, aliasMap);
         if (aliased) {
@@ -251,6 +254,11 @@ export const rewriteImportsInDirectory = (gen, directory, aliasMap) => {
       }
     }
   });
+};
+
+export const rewriteImportsInDirectory = (gen, directory, aliasMap) => {
+  if (Object.keys(aliasMap).length === 0) return;
+  rewriteRecursive(gen, directory, directory, aliasMap);
 };
 
 /**
