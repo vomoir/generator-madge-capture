@@ -275,14 +275,16 @@ const stripComments = (text) => {
 };
 
 /**
- * Finds the nearest jsconfig.json or tsconfig.json and extracts alias paths
+ * Finds the nearest config file and extracts alias paths
+ * @param {Generator} gen - For logging
  * @param {string} startPath - Directory to start searching from
  * @returns {Object} - Alias map with absolute target paths
  */
-export const getSourceAliases = (startPath) => {
+export const getSourceAliases = (gen, startPath) => {
   let currentDir = startPath;
   let foundPath = null;
-  const configFiles = ["jsconfig.json", "tsconfig.json"];
+  // Order matters: prefer simple aliases.json if it exists
+  const configFiles = ["aliases.json", "jsconfig.json", "tsconfig.json"];
 
   // 1. Climb up to find nearest config
   while (currentDir !== path.parse(currentDir).root) {
@@ -297,25 +299,42 @@ export const getSourceAliases = (startPath) => {
     currentDir = path.dirname(currentDir);
   }
 
-  if (!foundPath) return {};
+  if (!foundPath) {
+    gen.log("ℹ️ No alias config files found (looked for aliases.json, jsconfig.json, tsconfig.json).");
+    return {};
+  }
+
+  gen.log(`📖 Found alias config at: ${foundPath}`);
 
   try {
     const rawContent = fs.readFileSync(foundPath, "utf8");
     const config = JSON.parse(stripComments(rawContent));
-    const paths = config?.compilerOptions?.paths;
-    if (!paths) return {};
-
     const configDir = path.dirname(foundPath);
     const aliases = {};
-    Object.entries(paths).forEach(([key, values]) => {
-      const alias = key.replace(/\/\*$/, "");
-      let target = values[0].replace(/\/\*$/, "");
 
-      // Resolve to absolute path so we can normalize it later relative to commonBase
-      aliases[alias] = path.resolve(configDir, target);
-    });
+    const fileName = path.basename(foundPath);
+    if (fileName === "aliases.json") {
+      // Flat format: { "@Utils": "src/utils" }
+      Object.entries(config).forEach(([alias, target]) => {
+        aliases[alias] = path.resolve(configDir, target);
+      });
+    } else {
+      // jsconfig/tsconfig format
+      const paths = config?.compilerOptions?.paths;
+      if (!paths) {
+        gen.log(`⚠️ File ${fileName} found but has no compilerOptions.paths.`);
+        return {};
+      }
+
+      Object.entries(paths).forEach(([key, values]) => {
+        const alias = key.replace(/\/\*$/, "");
+        let target = values[0].replace(/\/\*$/, "");
+        aliases[alias] = path.resolve(configDir, target);
+      });
+    }
     return aliases;
   } catch (err) {
+    gen.log.error(`❌ Error parsing ${foundPath}: ${err.message}`);
     return {};
   }
 };

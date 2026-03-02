@@ -89,7 +89,8 @@ export default class extends Generator {
       }
     }
 
-    this.log(`🚀 Analyzing ${componentName}...`);
+    this.log(`🚀 Analyzing ${componentName}...\n`);
+
     // =============================================
     // Run Madge
     // =============================================
@@ -114,6 +115,7 @@ export default class extends Generator {
       // 2. Find the Common Ancestor (The "New Horizon")
       const commonBase = findCommonBase(absoluteList);
       this.log(`📍 Common Base identified: ${commonBase}`);
+      
       let relativeComponentPath = path
         .relative(commonBase, sourcePath)
         .replace(/\\/g, "/");
@@ -134,9 +136,8 @@ export default class extends Generator {
         relativeComponentPath = "src/" + relativeComponentPath;
       }
 
-      this.log(
-        `📍 Relative Component Path identified: ${relativeComponentPath}`,
-      );
+      this.log(`📍 Relative Component Path identified: ${relativeComponentPath}\n`);
+
       const assetExtensions = [
         ".css",
         ".scss",
@@ -162,7 +163,7 @@ export default class extends Generator {
 
       const finalCopyList = Array.from(expandedList);
       this.log(
-        `🎨 Added ${finalCopyList.length - absoluteList.length} assets (CSS/SVGs) to the queue.`,
+        `🎨 Added ${finalCopyList.length - absoluteList.length} assets to the queue.`,
       );
 
       // --- Parse & Normalize Aliases ---
@@ -170,26 +171,28 @@ export default class extends Generator {
 
       // 1. Auto-detect from config files if requested
       if (this.answers.autoDetectAliases) {
-        rawAliasMap = getSourceAliases(path.dirname(sourcePath));
+        rawAliasMap = getSourceAliases(this, path.dirname(sourcePath));
         const detectedCount = Object.keys(rawAliasMap).length;
         if (detectedCount > 0) {
-          this.log(`🔍 Auto-detected ${detectedCount} aliases from config.`);
-        } else {
-          this.log(`⚠️ No aliases found in jsconfig.json or tsconfig.json.`);
+          this.log(`🔍 Detected ${detectedCount} aliases from config file.`);
         }
       }
 
       // 2. Add manual aliases (manual overrides auto-detected)
       if (this.answers.aliases) {
         const projectRoot = findProjectRoot(path.dirname(sourcePath));
+        this.log(`📍 Project root for manual aliases: ${projectRoot}`);
         this.answers.aliases.split(",").forEach((item) => {
           const parts = item.split("=");
           if (parts.length === 2) {
             const alias = parts[0].trim();
             const target = parts[1].trim();
             if (alias && target) {
-              // Resolve manual targets relative to project root
-              rawAliasMap[alias] = path.resolve(projectRoot, target);
+              // Strip leading slash if it exists so path.resolve joins it correctly
+              const cleanTarget = target.replace(/^[\\\/]/, "");
+              const resolvedTarget = path.resolve(projectRoot, cleanTarget);
+              this.log(`   Manual alias: ${alias} -> ${resolvedTarget}`);
+              rawAliasMap[alias] = resolvedTarget;
             }
           }
         });
@@ -200,7 +203,10 @@ export default class extends Generator {
       for (const [alias, absoluteTarget] of Object.entries(rawAliasMap)) {
         let relTarget = path
           .relative(commonBase, absoluteTarget)
-          .replace(/\\/g, "/"); // --> "utils" for @Utils
+          .replace(/\\/g, "/");
+
+        // DEBUG: uncomment to see why aliases are skipped
+        // this.log(`DEBUG: alias ${alias} target ${absoluteTarget} -> relative ${relTarget}`);
 
         // If the target is outside commonBase, we can't rewrite to it 
         // because those files aren't in our sandbox.
@@ -226,7 +232,6 @@ export default class extends Generator {
       }
 
       // 4. Sync using the commonBase as the anchor
-      // This prevents the ../../ from ever leaving the finalTarget folder
       syncDependencies(
         this,
         finalCopyList,
@@ -295,7 +300,10 @@ export default class extends Generator {
           // For the template, we want the alias targets to point to src/relTarget
           const templateAliasMap = {};
           for (const [alias, relTarget] of Object.entries(aliasMap)) {
-            templateAliasMap[alias] = "src/" + relTarget.replace(/^\.\//, "");
+            templateAliasMap[alias] = "src/" + relTarget.replace(/^\.\//, "").replace(/\/$/, "");
+            if (templateAliasMap[alias].endsWith("src")) {
+                templateAliasMap[alias] = "src";
+            }
           }
 
           this.fs.copyTpl(
@@ -359,6 +367,7 @@ export default class extends Generator {
         process.exit(1);
       }
       this.log.error(`Failed to process reports: ${err.message}`);
+      console.error(err);
     }
   }
   async install() {
