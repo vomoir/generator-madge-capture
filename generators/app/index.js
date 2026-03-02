@@ -200,7 +200,7 @@ export default class extends Generator {
       for (const [alias, absoluteTarget] of Object.entries(rawAliasMap)) {
         let relTarget = path
           .relative(commonBase, absoluteTarget)
-          .replace(/\\/g, "/");
+          .replace(/\\/g, "/"); // --> "src/utils" for @Utils
 
         // if the alias points at the common base itself, use an empty
         // string so that every path under the base can be rewritten

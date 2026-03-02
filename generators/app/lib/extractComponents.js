@@ -102,8 +102,38 @@ export const syncDependencies = (
 
   absolutePaths.forEach((srcPath) => {
     try {
-      // …existing existence‑check code…
+      if (!fs.existsSync(srcPath)) {
+        gen.log.error(`File missing (skipped): ${srcPath}`);
+        missingCount++;
+        return;
+      }
 
+      // Determine relative path from the source component
+      // e.g., if sourceRoot is .../Form and srcPath is .../utils/date.js
+      // relativePart will be "../../utils/date.js"
+      const relativePart = path.relative(sourceRoot, srcPath);
+
+      // Create the final destination path
+      let destPath = path.join(targetDir, relativePart);
+      let content = fs.readFileSync(srcPath, "utf8");
+      let isReactFile = false;
+
+      // --- Extension Logic ---
+      if (srcPath.endsWith(".js")) {
+        isReactFile =
+          /import.*React/i.test(content) ||
+          /<[A-Z]/.test(content) ||
+          /return\s*\(/.test(content);
+        if (isReactFile) {
+          destPath = destPath.replace(/\.js$/, ".jsx");
+        }
+      }
+      // The Regex Import Renamer
+      // This regex looks for:
+      // - Strings starting with 'from' or 'import'
+      // - Followed by a quote (' or ")
+      // - Followed by a relative path (./ or ../)
+      // - Ending with .js before the closing quote
       // --- Regex import renamer ---
       const importRegex = /(from|import)\s+(['"])((\.\.?\/)+[^'"]*)(['"])/g;
 
@@ -118,11 +148,14 @@ export const syncDependencies = (
             importPath = importPath.replace(/\.js$/, ".jsx");
           }
 
-          // resolve the path relative to the common base so that the
-          // alias targets line up
-          const resolvedPath = path.posix.normalize(
-            path.posix.join(currentFileDir, importPath),
+          // resolve the path *through* the common base to retain whatever
+          // part of the tree the alias points at (e.g. "src/utils")
+          const absoluteImport = path.resolve(
+            sourceRoot, // commonBase, passed in from index.js
+            currentFileDir,
+            importPath,
           );
+
           const aliased = tryAlias(resolvedPath);
           if (aliased) {
             return `${p1} ${p2}${aliased}${p5}`;
@@ -132,7 +165,6 @@ export const syncDependencies = (
         });
       }
 
-      // …rest of the function…
       // Ensure destination folder exists
       const destFolder = path.dirname(destPath);
       if (!fs.existsSync(destFolder)) {
