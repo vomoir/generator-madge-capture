@@ -246,7 +246,9 @@ export default class extends Generator {
       // Populate sandbox components
       // =============================================
       const shouldGenerateTemplates =
-        (mode === "new" && this.answers.createSandBox) || mode === "existing";
+        (mode === "new" && this.answers.createSandBox) ||
+        mode === "existing" ||
+        mode === "dependency_only";
 
       if (shouldGenerateTemplates) {
         this.log(`✅ Copying templates: ${componentName}`);
@@ -282,6 +284,15 @@ export default class extends Generator {
           `📦 Synced ${Object.keys(syncedVersions).length} peer dependencies from source.`,
         );
 
+        // For the template, we want the alias targets to point to src/relTarget
+        const templateAliasMap = {};
+        for (const [alias, relTarget] of Object.entries(aliasMap)) {
+          let normalizedRel = relTarget.replace(/^\.\/|\/$/g, "");
+          templateAliasMap[alias] = normalizedRel
+            ? (mode === "new" ? "src/" : "") + normalizedRel
+            : (mode === "new" ? "src" : "");
+        }
+
         if (mode === "new") {
           // Pass finalDeps to the Template
           this.fs.copyTpl(
@@ -295,13 +306,6 @@ export default class extends Generator {
               ),
             },
           );
-
-          // For the template, we want the alias targets to point to src/relTarget
-          const templateAliasMap = {};
-          for (const [alias, relTarget] of Object.entries(aliasMap)) {
-            let normalizedRel = relTarget.replace(/^\.\/|\/$/g, "");
-            templateAliasMap[alias] = normalizedRel ? "src/" + normalizedRel : "src";
-          }
 
           this.fs.copyTpl(
             this.templatePath("sandbox/vite.config.js"),
@@ -343,14 +347,26 @@ export default class extends Generator {
           );
         }
 
-        this.fs.copyTpl(
-          this.templatePath("sandbox/Component.stories.jsx"),
-          path.join(finalTarget, `${componentName}.stories.jsx`),
-          {
-            componentName,
-            relativeComponentPath, // Point to the extracted location
-          },
-        );
+        // Generate jsconfig.json for new and dependency_only modes
+        if (mode === "new" || mode === "dependency_only") {
+          this.fs.copyTpl(
+            this.templatePath("sandbox/jsconfig.json"),
+            path.join(finalTarget, "jsconfig.json"),
+            { aliasMap: templateAliasMap },
+          );
+        }
+
+        // Stories are for new and existing modes
+        if (mode === "new" || mode === "existing") {
+          this.fs.copyTpl(
+            this.templatePath("sandbox/Component.stories.jsx"),
+            path.join(finalTarget, `${componentName}.stories.jsx`),
+            {
+              componentName,
+              relativeComponentPath, // Point to the extracted location
+            },
+          );
+        }
 
         await this.fs.commit(); // Forces Yeoman to write templates to disk NOW
       }
