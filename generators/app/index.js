@@ -200,7 +200,14 @@ export default class extends Generator {
       for (const [alias, absoluteTarget] of Object.entries(rawAliasMap)) {
         let relTarget = path
           .relative(commonBase, absoluteTarget)
-          .replace(/\\/g, "/"); // --> "src/utils" for @Utils
+          .replace(/\\/g, "/"); // --> "utils" for @Utils
+
+        // If the target is outside commonBase, we can't rewrite to it 
+        // because those files aren't in our sandbox.
+        if (relTarget.startsWith("..")) {
+          this.log(chalk.yellow(`⚠️ Skipping alias '${alias}': target '${relTarget}' is outside common base.`));
+          continue;
+        }
 
         // if the alias points at the common base itself, use an empty
         // string so that every path under the base can be rewritten
@@ -208,6 +215,14 @@ export default class extends Generator {
           relTarget = "";
         }
         aliasMap[alias] = relTarget;
+      }
+
+      const activeAliasCount = Object.keys(aliasMap).length;
+      if (activeAliasCount > 0) {
+        this.log(`✨ ${activeAliasCount} aliases active for import rewriting.`);
+        Object.entries(aliasMap).forEach(([alias, target]) => {
+            this.log(`   ${alias} -> ${target || "./"}`);
+        });
       }
 
       // 4. Sync using the commonBase as the anchor
