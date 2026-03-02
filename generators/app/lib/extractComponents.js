@@ -59,8 +59,15 @@ export const getAbsoluteFiles = (dependencyJson, sourceFile) => {
  * @param {string[]} absolutePaths - Array of resolved absolute source paths
  * @param {string} sourceRoot - The directory of the entry component (D:\...\Form)
  * @param {string} targetDir - The destination root (C:\...\madge-capture\Form)
+ * @param {Object} aliasMap - Map of aliases to their target paths
  */
-export const syncDependencies = (gen, absolutePaths, sourceRoot, targetDir) => {
+export const syncDependencies = (
+  gen,
+  absolutePaths,
+  sourceRoot,
+  targetDir,
+  aliasMap = {},
+) => {
   let copiedCount = 0;
   let missingCount = 0;
 
@@ -76,7 +83,7 @@ export const syncDependencies = (gen, absolutePaths, sourceRoot, targetDir) => {
       // Determine relative path from the source component
       // e.g., if sourceRoot is .../Form and srcPath is .../utils/date.js
       // relativePart will be "../../utils/date.js"
-      const relativePart = path.relative(sourceRoot, srcPath);
+      const relativePart = path.relative(sourceRoot, srcPath).replace(/\\/g, "/");
 
       // Create the final destination path
       let destPath = path.join(targetDir, relativePart);
@@ -93,19 +100,74 @@ export const syncDependencies = (gen, absolutePaths, sourceRoot, targetDir) => {
           destPath = destPath.replace(/\.js$/, ".jsx");
         }
       }
+
       // The Regex Import Renamer
-      // This regex looks for:
-      // - Strings starting with 'from' or 'import'
-      // - Followed by a quote (' or ")
-      // - Followed by a relative path (./ or ../)
-      // - Ending with .js before the closing quote
-      const importRegex = /(from|import)\s+(['"])((\.\.?\/)+.*)\.js(['"])/g;
+      // Matches relative imports like ./file or ../../file
+      const importRegex = /(from|import)\s+(['"])((\.\.?\/)+[^'"]*)(['"])/g;
+
       // We only perform the replacement on JS/JSX files
       if (srcPath.match(/\.(js|jsx)$/)) {
+        const currentFileDir = path.dirname(relativePart);
+
         content = content.replace(importRegex, (match, p1, p2, p3, p4, p5) => {
-          // We check if the file being imported is one of the ones we are extracting
-          // For simplicity, we assume if it's a relative import, it needs the .jsx swap
-          return `${p1} ${p2}${p3}.jsx${p5}`;
+          let importPath = p3;
+
+          // 1. Rename .js to .jsx in the import string if needed
+          if (importPath.endsWith(".js")) {
+            importPath = importPath.replace(/\.js$/, ".jsx");
+          }
+
+          // 2. Alias Replacement Logic
+          // Resolve the import path relative to the current file to get the path from sourceRoot
+          const resolvedPath = path.posix.join(currentFileDir, importPath);
+          const normalizedResolvedPath = path.posix.normalize(resolvedPath);
+
+          for (let [alias, target] of Object.entries(aliasMap)) {
+            // Normalize target: posix separators, no leading slash
+            let normalizedTarget = target.replace(/\\/g, "/").replace(/^\//, "");
+
+            // If the target starts with "src/" and our path doesn't,
+            // we might be inside the src folder already.
+            // Let's also try matching without "src/" if commonBase is likely "src"
+            const targetsToTry = [normalizedTarget];
+            if (normalizedTarget.startsWith("src/")) {
+              targetsToTry.push(normalizedTarget.replace(/^src\//, ""));
+            }
+
+            for (const t of targetsToTry) {
+              if (
+                normalizedResolvedPath === t ||
+                normalizedResolvedPath.startsWith(t + "/")
+              ) {
+                let remaining = normalizedResolvedPath.slice(t.length);
+                if (remaining.startsWith("/")) remaining = remaining.slice(1);
+
+                // Construct the new aliased path
+                let newImport = alias;
+                if (remaining) {
+                  // If alias ends with /, don't add another /
+                  if (newImport.endsWith("/")) {
+                    newImport += remaining;
+                  } else {
+                    // Special case for @/ which usually doesn't need a / if remaining starts with one
+                    // but we normalized remaining to NOT start with /
+                    newImport += "/" + remaining;
+                  }
+                }
+                
+                // Clean up any double slashes from @//
+                newImport = newImport.replace(/\/+/g, '/').replace(/\/$/, '');
+                // But keep @/ if it was intended
+                if (alias === '@/' && !newImport.startsWith('@/')) {
+                    newImport = '@/' + newImport.replace(/^@/, '');
+                }
+
+                return `${p1} ${p2}${newImport}${p5}`;
+              }
+            }
+          }
+
+          return `${p1} ${p2}${importPath}${p5}`;
         });
       }
       // Ensure destination folder exists
@@ -115,7 +177,6 @@ export const syncDependencies = (gen, absolutePaths, sourceRoot, targetDir) => {
       }
 
       // Perform the copy
-      // We use writeFileSync instead of copyFileSync to save our modified content
       fs.writeFileSync(destPath, content);
       copiedCount++;
     } catch (err) {

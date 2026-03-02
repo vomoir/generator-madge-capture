@@ -10,9 +10,14 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      // If your monorepo uses aliases (e.g. '@utils'),
-      // you can map them here to the folders you extracted.
-      // '@utils': path.resolve(__dirname, './utils'),
+      <% for (let [alias, target] of Object.entries(aliasMap)) { 
+         let normalizedTarget = target.replace(/\\/g, '/').replace(/^\//, '');
+         if (normalizedTarget.startsWith('src/')) {
+             normalizedTarget = normalizedTarget.replace(/^src\//, '');
+         }
+      %>
+      '<%= alias %>': path.resolve(__dirname, './<%= normalizedTarget %>'),
+      <% } %>
     },
   },
   server: {

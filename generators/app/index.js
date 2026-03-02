@@ -153,9 +153,25 @@ export default class extends Generator {
       this.log(
         `🎨 Added ${finalCopyList.length - absoluteList.length} assets (CSS/SVGs) to the queue.`,
       );
+
+      // --- Parse Aliases ---
+      const aliasMap = {};
+      if (this.answers.aliases) {
+        this.answers.aliases.split(",").forEach((item) => {
+          const parts = item.split("=");
+          if (parts.length === 2) {
+            const alias = parts[0].trim();
+            const target = parts[1].trim();
+            if (alias && target) {
+              aliasMap[alias] = target;
+            }
+          }
+        });
+      }
+
       // 3. Sync using the commonBase as the anchor
       // This prevents the ../../ from ever leaving the finalTarget folder
-      syncDependencies(this, finalCopyList, commonBase, finalTarget);
+      syncDependencies(this, finalCopyList, commonBase, finalTarget, aliasMap);
 
       await saveMadgeReports(res, finalTarget, componentName);
 
@@ -217,6 +233,7 @@ export default class extends Generator {
           this.fs.copyTpl(
             this.templatePath("sandbox/vite.config.js"),
             path.join(finalTarget, "vite.config.js"),
+            { aliasMap },
           );
 
           this.fs.copyTpl(
