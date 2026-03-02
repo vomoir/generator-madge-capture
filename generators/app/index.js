@@ -175,6 +175,8 @@ export default class extends Generator {
         const detectedCount = Object.keys(rawAliasMap).length;
         if (detectedCount > 0) {
           this.log(`🔍 Detected ${detectedCount} aliases from config file.`);
+        } else {
+            this.log(`ℹ️ No aliases found in config files.`);
         }
       }
 
@@ -204,9 +206,6 @@ export default class extends Generator {
         let relTarget = path
           .relative(commonBase, absoluteTarget)
           .replace(/\\/g, "/");
-
-        // DEBUG: uncomment to see why aliases are skipped
-        // this.log(`DEBUG: alias ${alias} target ${absoluteTarget} -> relative ${relTarget}`);
 
         // If the target is outside commonBase, we can't rewrite to it 
         // because those files aren't in our sandbox.
@@ -300,10 +299,8 @@ export default class extends Generator {
           // For the template, we want the alias targets to point to src/relTarget
           const templateAliasMap = {};
           for (const [alias, relTarget] of Object.entries(aliasMap)) {
-            templateAliasMap[alias] = "src/" + relTarget.replace(/^\.\//, "").replace(/\/$/, "");
-            if (templateAliasMap[alias].endsWith("src")) {
-                templateAliasMap[alias] = "src";
-            }
+            let normalizedRel = relTarget.replace(/^\.\/|\/$/g, "");
+            templateAliasMap[alias] = normalizedRel ? "src/" + normalizedRel : "src";
           }
 
           this.fs.copyTpl(

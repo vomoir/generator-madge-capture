@@ -283,10 +283,8 @@ const stripComments = (text) => {
 export const getSourceAliases = (gen, startPath) => {
   let currentDir = startPath;
   let foundPath = null;
-  // Order matters: prefer simple aliases.json if it exists
   const configFiles = ["aliases.json", "jsconfig.json", "tsconfig.json"];
 
-  // 1. Climb up to find nearest config
   while (currentDir !== path.parse(currentDir).root) {
     for (const file of configFiles) {
       const checkPath = path.join(currentDir, file);
@@ -314,23 +312,21 @@ export const getSourceAliases = (gen, startPath) => {
 
     const fileName = path.basename(foundPath);
     if (fileName === "aliases.json") {
-      // Flat format: { "@Utils": "src/utils" }
       Object.entries(config).forEach(([alias, target]) => {
-        aliases[alias] = path.resolve(configDir, target);
+        // Handle leading slashes by resolving relative to configDir
+        const cleanTarget = target.replace(/^[\\\/]/, "");
+        aliases[alias] = path.resolve(configDir, cleanTarget);
       });
     } else {
-      // jsconfig/tsconfig format
       const paths = config?.compilerOptions?.paths;
-      if (!paths) {
-        gen.log(`⚠️ File ${fileName} found but has no compilerOptions.paths.`);
-        return {};
+      if (paths) {
+        Object.entries(paths).forEach(([key, values]) => {
+          const alias = key.replace(/\/\*$/, "");
+          let target = values[0].replace(/\/\*$/, "");
+          const cleanTarget = target.replace(/^[\\\/]/, "");
+          aliases[alias] = path.resolve(configDir, cleanTarget);
+        });
       }
-
-      Object.entries(paths).forEach(([key, values]) => {
-        const alias = key.replace(/\/\*$/, "");
-        let target = values[0].replace(/\/\*$/, "");
-        aliases[alias] = path.resolve(configDir, target);
-      });
     }
     return aliases;
   } catch (err) {
@@ -344,8 +340,6 @@ export const getSourceAliases = (gen, startPath) => {
  * @param {string} folderPath
  */
 export const openExplorer = (folderPath) => {
-  // On Windows, 'explorer' is the command.
-  // We wrap the path in quotes to handle spaces in folder names.
   exec(`explorer "${folderPath}"`, (err) => {
     if (err) {
       console.error(`Could not open explorer: ${err.message}`);
