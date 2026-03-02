@@ -248,6 +248,54 @@ export const getSourceVersions = (startPath, depNames) => {
 };
 
 /**
+ * Finds the nearest jsconfig.json or tsconfig.json and extracts alias paths
+ * @param {string} startPath - Directory to start searching from
+ * @returns {Object} - Alias map (e.g., { '@Components': 'src/Components' })
+ */
+export const getSourceAliases = (startPath) => {
+  let currentDir = startPath;
+  let foundPath = null;
+  const configFiles = ["jsconfig.json", "tsconfig.json"];
+
+  // 1. Climb up to find nearest config
+  while (currentDir !== path.parse(currentDir).root) {
+    for (const file of configFiles) {
+      const checkPath = path.join(currentDir, file);
+      if (fs.existsSync(checkPath)) {
+        foundPath = checkPath;
+        break;
+      }
+    }
+    if (foundPath) break;
+    currentDir = path.dirname(currentDir);
+  }
+
+  if (!foundPath) return {};
+
+  try {
+    // Basic JSON parse (ignoring potential comments for now)
+    const config = JSON.parse(fs.readFileSync(foundPath, "utf8"));
+    const paths = config?.compilerOptions?.paths;
+    if (!paths) return {};
+
+    const aliases = {};
+    Object.entries(paths).forEach(([key, values]) => {
+      // Key might be "@/*" or "@Components"
+      // Values is usually ["src/*"] or ["src/Components"]
+      const alias = key.replace(/\/\*$/, "");
+      let target = values[0].replace(/\/\*$/, "");
+      
+      // We want the target relative to the config file
+      // If baseUrl is set, it should be relative to that, but often it's just ./
+      aliases[alias] = target;
+    });
+    return aliases;
+  } catch (err) {
+    return {};
+  }
+};
+
+/**
  * Opens a folder in the native OS file explorer
  * @param {string} folderPath
  */

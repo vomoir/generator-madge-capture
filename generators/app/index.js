@@ -12,6 +12,7 @@ import {
   syncDependencies,
   findCommonBase,
   getSourceVersions,
+  getSourceAliases,
 } from "./lib/extractComponents.js";
 import { getPrompts } from "./lib/prompts.js";
 
@@ -155,7 +156,21 @@ export default class extends Generator {
       );
 
       // --- Parse Aliases ---
-      const aliasMap = {};
+      let aliasMap = {};
+
+      // 1. Auto-detect from config files if requested
+      if (this.answers.autoDetectAliases) {
+        const detected = getSourceAliases(path.dirname(sourcePath));
+        const detectedCount = Object.keys(detected).length;
+        if (detectedCount > 0) {
+          this.log(`🔍 Auto-detected ${detectedCount} aliases from config.`);
+          aliasMap = { ...detected };
+        } else {
+          this.log(`⚠️ No aliases found in jsconfig.json or tsconfig.json.`);
+        }
+      }
+
+      // 2. Add manual aliases (manual overrides auto-detected)
       if (this.answers.aliases) {
         this.answers.aliases.split(",").forEach((item) => {
           const parts = item.split("=");

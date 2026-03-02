@@ -7,7 +7,7 @@ export const getPrompts = (defaultCaptureBase) => [
     store: true,
   },
   {
-    type: "list",
+    type: "select",
     name: "mode",
     message: "How do you want to export this component?",
     choices: [
@@ -54,10 +54,17 @@ export const getPrompts = (defaultCaptureBase) => [
     store: true,
   },
   {
+    type: "confirm",
+    name: "autoDetectAliases",
+    message: "Try to auto-detect aliases from jsconfig.json/tsconfig.json?",
+    default: true,
+    store: true,
+  },
+  {
     type: "input",
     name: "aliases",
     message:
-      "Enter any path aliases (comma-separated, e.g., @/ = src, @Components = src/Components):",
+      "Enter any additional path aliases (comma-separated, e.g., @/ = src, @Components = src/Components):",
     default: "",
     store: true,
   },
