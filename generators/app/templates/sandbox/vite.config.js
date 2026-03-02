@@ -11,12 +11,9 @@ export default defineConfig({
   resolve: {
     alias: {
       <% for (let [alias, target] of Object.entries(aliasMap)) { 
-         let normalizedTarget = target.replace(/\\/g, '/').replace(/^\//, '');
-         if (normalizedTarget.startsWith('src/')) {
-             normalizedTarget = normalizedTarget.replace(/^src\//, '');
-         }
+         // target is already normalized (e.g., 'src/Components' or 'src/')
       %>
-      '<%= alias %>': path.resolve(__dirname, './<%= normalizedTarget %>'),
+      '<%= alias %>': path.resolve(__dirname, './<%= target.replace(/\/$/, "") %>'),
       <% } %>
     },
   },
