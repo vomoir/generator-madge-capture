@@ -54,6 +54,57 @@ export const getAbsoluteFiles = (dependencyJson, sourceFile) => {
 };
 
 /**
+ * helper that attempts to convert a path (normalized *relative* to
+ * sourceRoot) into one of the configured aliases. returns the aliased
+ * string or null if none of the aliases matched.
+ */
+const tryAlias = (normalizedPath, aliasMap) => {
+  // Sort aliases by length descending to match most specific first
+  // We want to match '@Components/Form' before '@Components'
+  const sortedAliases = Object.entries(aliasMap).sort(
+    (a, b) => b[1].length - a[1].length,
+  );
+
+  for (const [alias, target] of sortedAliases) {
+    // target is already relative to commonBase and normalized (no leading/trailing slashes)
+    const normalizedTarget = target.replace(/^\.\/|\/$/g, "");
+
+    const isMatch =
+      normalizedTarget === "" || // Root alias (e.g. @/ -> src/)
+      normalizedPath === normalizedTarget ||
+      normalizedPath.startsWith(normalizedTarget + "/");
+
+    if (isMatch) {
+      let remaining = normalizedPath.slice(normalizedTarget.length);
+      if (remaining.startsWith("/")) remaining = remaining.slice(1);
+
+      // Construct the new aliased path
+      let newImport = alias;
+      if (remaining) {
+        // If alias ends with /, don't add another /
+        if (newImport.endsWith("/")) {
+          newImport += remaining;
+        } else {
+          newImport += "/" + remaining;
+        }
+      }
+
+      // Clean up any double slashes from @//
+      newImport = newImport.replace(/\/+/g, "/").replace(/\/$/, "");
+      
+      // Special case for @/ which usually doesn't need a / if remaining starts with one
+      // but we normalized remaining to NOT start with /
+      if (alias === "@/" && !newImport.startsWith("@/")) {
+        newImport = "@/" + newImport.replace(/^@/, "");
+      }
+
+      return newImport;
+    }
+  }
+  return null;
+};
+
+/**
  * Copies dependency files while preserving folder structure.
  * @param {Generator} gen - The Yeoman generator instance for logging
  * @param {string[]} absolutePaths - Array of resolved absolute source paths
@@ -61,7 +112,6 @@ export const getAbsoluteFiles = (dependencyJson, sourceFile) => {
  * @param {string} targetDir - The destination root (C:\...\madge-capture\Form)
  * @param {Object} aliasMap - Map of aliases to their target paths
  */
-// ...existing code...
 export const syncDependencies = (
   gen,
   absolutePaths,
@@ -72,34 +122,6 @@ export const syncDependencies = (
   let copiedCount = 0;
   let missingCount = 0;
 
-  // helper that attempts to convert a path (normalized *relative* to
-  // sourceRoot) into one of the configured aliases.  returns the aliased
-  // string or null if none of the aliases matched.
-  const tryAlias = (normalizedPath) => {
-    for (const [alias, target] of Object.entries(aliasMap)) {
-      // make empty string easier to work with
-      const normTarget = target === "" || target === "." ? "" : target;
-
-      if (
-        normalizedPath === normTarget ||
-        normalizedPath.startsWith(normTarget + "/")
-      ) {
-        let remaining = normalizedPath.slice(normTarget.length);
-        if (remaining.startsWith("/")) remaining = remaining.slice(1);
-
-        // optionally strip the file name if you only want the folder:
-        // remaining = remaining.replace(/\/[^/]+$/, "");
-
-        let newImport = alias;
-        if (remaining) {
-          newImport += newImport.endsWith("/") ? remaining : "/" + remaining;
-        }
-        return newImport.replace(/\/+/g, "/");
-      }
-    }
-    return null;
-  };
-
   absolutePaths.forEach((srcPath) => {
     try {
       if (!fs.existsSync(srcPath)) {
@@ -108,10 +130,8 @@ export const syncDependencies = (
         return;
       }
 
-      // Determine relative path from the source component
-      // e.g., if sourceRoot is .../Form and srcPath is .../utils/date.js
-      // relativePart will be "../../utils/date.js"
-      const relativePart = path.relative(sourceRoot, srcPath);
+      // Determine relative path from the sourceRoot (commonBase)
+      const relativePart = path.relative(sourceRoot, srcPath).replace(/\\/g, "/");
 
       // Create the final destination path
       let destPath = path.join(targetDir, relativePart);
@@ -128,13 +148,8 @@ export const syncDependencies = (
           destPath = destPath.replace(/\.js$/, ".jsx");
         }
       }
-      // The Regex Import Renamer
-      // This regex looks for:
-      // - Strings starting with 'from' or 'import'
-      // - Followed by a quote (' or ")
-      // - Followed by a relative path (./ or ../)
-      // - Ending with .js before the closing quote
-      // --- Regex import renamer ---
+
+      // Matches relative imports like ./file or ../../file
       const importRegex = /(from|import)\s+(['"])((\.\.?\/)+[^'"]*)(['"])/g;
 
       if (srcPath.match(/\.(js|jsx)$/)) {
@@ -148,15 +163,10 @@ export const syncDependencies = (
             importPath = importPath.replace(/\.js$/, ".jsx");
           }
 
-          // resolve the path *through* the common base to retain whatever
-          // part of the tree the alias points at (e.g. "src/utils")
-          const absoluteImport = path.resolve(
-            sourceRoot, // commonBase, passed in from index.js
-            currentFileDir,
-            importPath,
-          );
+          // Resolve the import path relative to the current file to get the path relative to commonBase
+          const normalizedResolvedPath = path.posix.normalize(path.posix.join(currentFileDir, importPath));
 
-          const aliased = tryAlias(resolvedPath);
+          const aliased = tryAlias(normalizedResolvedPath, aliasMap);
           if (aliased) {
             return `${p1} ${p2}${aliased}${p5}`;
           }
@@ -183,6 +193,7 @@ export const syncDependencies = (
   gen.log(`✅ Copied: ${copiedCount}`);
   if (missingCount > 0) gen.log(`⚠️ Missing: ${missingCount}`);
 };
+
 /**
  * Finds the shortest common parent directory for an array of absolute paths.
  */
@@ -257,6 +268,13 @@ export const findProjectRoot = (startPath) => {
 };
 
 /**
+ * Helper to strip comments from JSON strings
+ */
+const stripComments = (text) => {
+  return text.replace(/\/\/.*|\/\*[\s\S]*?\*\//g, "");
+};
+
+/**
  * Finds the nearest jsconfig.json or tsconfig.json and extracts alias paths
  * @param {string} startPath - Directory to start searching from
  * @returns {Object} - Alias map with absolute target paths
@@ -282,7 +300,8 @@ export const getSourceAliases = (startPath) => {
   if (!foundPath) return {};
 
   try {
-    const config = JSON.parse(fs.readFileSync(foundPath, "utf8"));
+    const rawContent = fs.readFileSync(foundPath, "utf8");
+    const config = JSON.parse(stripComments(rawContent));
     const paths = config?.compilerOptions?.paths;
     if (!paths) return {};
 
