@@ -155,7 +155,7 @@ export const syncDependencies = (
       // The [\s\S]*? handles potential multiline between import/export/from and the path
       const importRegex = /(from|import|export)[\s\S]*?(['"])([^'"]+)(['"])/g;
 
-      if (srcPath.match(/\.(js|jsx)$/)) {
+      if (srcPath.match(/\.(js|jsx|ts|tsx)$/)) {
         const currentFileDir = path.dirname(relativePart);
 
         content = content.replace(importRegex, (match, p1, p2, p3, p4) => {
@@ -222,7 +222,7 @@ const rewriteRecursive = (gen, rootDirectory, currentDir, aliasMap) => {
     const fullPath = path.join(currentDir, file);
     if (fs.lstatSync(fullPath).isDirectory()) {
       rewriteRecursive(gen, rootDirectory, fullPath, aliasMap);
-    } else if (fullPath.match(/\.(js|jsx)$/)) {
+    } else if (fullPath.match(/\.(js|jsx|ts|tsx)$/)) {
       let content = fs.readFileSync(fullPath, "utf8");
       
       const relativeToFile = path.relative(rootDirectory, fullPath).replace(/\\/g, "/");
@@ -312,7 +312,11 @@ export const getSourceVersions = (startPath, depNames) => {
   if (!foundPath) return {};
 
   const pkg = JSON.parse(fs.readFileSync(foundPath, "utf8"));
-  const allAvailable = { ...pkg.devDependencies, ...pkg.dependencies };
+  const allAvailable = { 
+    ...pkg.devDependencies, 
+    ...pkg.dependencies,
+    ...pkg.peerDependencies
+  };
 
   const results = {};
   depNames.forEach((name) => {
