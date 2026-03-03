@@ -83,3 +83,15 @@ If you elected to create a standalone storybook project, you will be asked if yo
 ? Open explorer to show copied files? (y/N)             ← Opens your file explorer to view the newly copied component
 ```
 The generator then provides instructions on how to run your storybook project if that option was chosen.
+ 
+ ## Summary of Changes:
+   1. New `jsconfig.json` Template: Created a template in generators/app/templates/sandbox/jsconfig.json that dynamically generates the compilerOptions.paths based on the active aliases.
+   2. Updated Generator Logic (`generators/app/index.js`):
+       - Modified shouldGenerateTemplates to include dependency_only mode, ensuring jsconfig.json is created even when only extracting dependencies.
+       - Refined the templateAliasMap creation to handle path prefixing correctly: src/ is prepended for "new" projects, while "dependency\_only" extractions use paths relative to the extraction root.
+       - Added logic to generate jsconfig.json for both new and dependency_only modes.
+       - Ensured Storybook stories are only generated for new and existing modes.
+   3. Import Rewriting: Verified that the existing syncDependencies logic correctly utilizes the aliasMap to rewrite relative imports (e.g., ../../utils/distanceUtils) to their aliased versions (e.g.,
+      @Utils/distanceUtils) during the file copying process.
+
+  These changes ensure that the extracted components are portable and that their internal aliased imports are immediately resolvable in the target environment.

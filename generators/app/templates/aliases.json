@@ -1,0 +1,7 @@
+{
+    "@/": "src",
+    "@Utils": "src/utils",
+    "@Components": "src/components",
+    "@Hooks": "src/Hooks",
+    "@Data": "src/data"
+ }

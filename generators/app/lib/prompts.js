@@ -7,7 +7,7 @@ export const getPrompts = (defaultCaptureBase) => [
     store: true,
   },
   {
-    type: "list",
+    type: "select",
     name: "mode",
     message: "How do you want to export this component?",
     choices: [

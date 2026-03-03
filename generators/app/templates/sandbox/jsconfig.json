@@ -1,0 +1,20 @@
+{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      <% 
+      const aliasKeys = Object.keys(aliasMap);
+      for (let i = 0; i < aliasKeys.length; i++) {
+         const alias = aliasKeys[i];
+         const target = aliasMap[alias];
+         const cleanAlias = alias.replace(/\/\*$/, "");
+         const cleanTarget = target.replace(/^\.\/|\/$/g, "");
+         const isLast = i === aliasKeys.length - 1;
+      %>
+      "<%= cleanAlias %>/*": ["./<%= cleanTarget ? cleanTarget + "/" : "" %>*"],
+      "<%= cleanAlias %>": ["./<%= cleanTarget ? cleanTarget : "." %>"]<%= isLast ? "" : "," %>
+      <% } %>
+    }
+  },
+  "exclude": ["node_modules", "dist"]
+}

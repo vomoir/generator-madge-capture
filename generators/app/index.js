@@ -10,8 +10,13 @@ import { saveMadgeReports } from "./lib/saveMadgeReports.js"; // Remember the .j
 import {
   openExplorer,
   syncDependencies,
+  rewriteImportsInDirectory,
   findCommonBase,
   getSourceVersions,
+  getSourceAliases,
+  generateAliasesFromStructure,
+  validateAliases,
+  findProjectRoot,
 } from "./lib/extractComponents.js";
 import { getPrompts } from "./lib/prompts.js";
 
@@ -54,6 +59,7 @@ export default class extends Generator {
 
     const componentName = path.parse(sourcePath).name;
     let finalTarget;
+    let extractionDir;
 
     if (mode === "existing") {
       finalTarget = path.join(
@@ -61,8 +67,11 @@ export default class extends Generator {
         this.answers.componentSubDir,
         componentName,
       );
+      extractionDir = finalTarget;
     } else {
       finalTarget = path.join(this.answers.outputPath, componentName);
+      extractionDir =
+        mode === "new" ? path.join(finalTarget, "src") : finalTarget;
     }
 
     // Clean up previous extraction...
@@ -83,7 +92,8 @@ export default class extends Generator {
       }
     }
 
-    this.log(`🚀 Analyzing ${componentName}...`);
+    this.log(`🚀 Analyzing ${componentName}...\n`);
+
     // =============================================
     // Run Madge
     // =============================================
@@ -108,6 +118,7 @@ export default class extends Generator {
       // 2. Find the Common Ancestor (The "New Horizon")
       const commonBase = findCommonBase(absoluteList);
       this.log(`📍 Common Base identified: ${commonBase}`);
+      
       let relativeComponentPath = path
         .relative(commonBase, sourcePath)
         .replace(/\\/g, "/");
@@ -123,9 +134,13 @@ export default class extends Generator {
         }
       }
 
-      this.log(
-        `📍 Relative Component Path identified: ${relativeComponentPath}`,
-      );
+      // For templates to point to the right place
+      if (mode === "new") {
+        relativeComponentPath = "src/" + relativeComponentPath;
+      }
+
+      this.log(`📍 Relative Component Path identified: ${relativeComponentPath}\n`);
+
       const assetExtensions = [
         ".css",
         ".scss",
@@ -151,11 +166,93 @@ export default class extends Generator {
 
       const finalCopyList = Array.from(expandedList);
       this.log(
-        `🎨 Added ${finalCopyList.length - absoluteList.length} assets (CSS/SVGs) to the queue.`,
+        `🎨 Added ${finalCopyList.length - absoluteList.length} assets to the queue.`,
       );
-      // 3. Sync using the commonBase as the anchor
-      // This prevents the ../../ from ever leaving the finalTarget folder
-      syncDependencies(this, finalCopyList, commonBase, finalTarget);
+
+      // --- Parse & Normalize Aliases ---
+      let rawAliasMap = {};
+
+      // 1. Auto-detect from config files if requested
+      if (this.answers.autoDetectAliases) {
+        rawAliasMap = getSourceAliases(this, path.dirname(sourcePath));
+        const detectedCount = Object.keys(rawAliasMap).length;
+        if (detectedCount > 0) {
+          this.log(`🔍 Detected ${detectedCount} aliases from config file.`);
+        } else {
+            this.log(`ℹ️ No aliases found in config files.`);
+        }
+      }
+
+      // 2. Add manual aliases (manual overrides auto-detected)
+      if (this.answers.aliases) {
+        const projectRoot = findProjectRoot(path.dirname(sourcePath));
+        this.log(`📍 Project root for manual aliases: ${projectRoot}`);
+        this.answers.aliases.split(",").forEach((item) => {
+          const parts = item.split("=");
+          if (parts.length === 2) {
+            const alias = parts[0].trim();
+            const target = parts[1].trim();
+            if (alias && target) {
+              // Strip leading slash if it exists so path.resolve joins it correctly
+              const cleanTarget = target.replace(/^[\\\/]/, "");
+              const resolvedTarget = path.resolve(projectRoot, cleanTarget);
+              this.log(`   Manual alias: ${alias} -> ${resolvedTarget}`);
+              rawAliasMap[alias] = resolvedTarget;
+            }
+          }
+        });
+      }
+
+      // 3. Auto-generate aliases from folder structure if none were found
+      if (Object.keys(rawAliasMap).length === 0) {
+        rawAliasMap = generateAliasesFromStructure(commonBase, finalCopyList);
+        const generatedCount = Object.keys(rawAliasMap).length;
+        if (generatedCount > 0) {
+          this.log(`✨ Generated ${generatedCount} aliases from folder structure.`);
+          Object.entries(rawAliasMap).forEach(([alias, target]) => {
+            this.log(`   ${alias} -> ${target}`);
+          });
+        }
+      }
+
+      // 3. Normalize all alias targets relative to commonBase
+      const aliasMap = {};
+      for (const [alias, absoluteTarget] of Object.entries(rawAliasMap)) {
+        let relTarget = path
+          .relative(commonBase, absoluteTarget)
+          .replace(/\\/g, "/");
+
+        // If the target is outside commonBase, we can't rewrite to it 
+        // because those files aren't in our sandbox.
+        if (relTarget.startsWith("..")) {
+          this.log(chalk.yellow(`⚠️ Skipping alias '${alias}': target '${relTarget}' is outside common base.`));
+          continue;
+        }
+
+        // if the alias points at the common base itself, use an empty
+        // string so that every path under the base can be rewritten
+        if (!relTarget || relTarget === ".") {
+          relTarget = "";
+        }
+        aliasMap[alias] = relTarget;
+      }
+
+      const activeAliasCount = Object.keys(aliasMap).length;
+      if (activeAliasCount > 0) {
+        this.log(`✨ ${activeAliasCount} aliases active for import rewriting.`);
+        Object.entries(aliasMap).forEach(([alias, target]) => {
+            this.log(`   ${alias} -> ${target || "./"}`);
+        });
+      }
+
+      // 4. Sync using the commonBase as the anchor
+      syncDependencies(
+        this,
+        finalCopyList,
+        commonBase,
+        extractionDir,
+        aliasMap,
+      );
 
       await saveMadgeReports(res, finalTarget, componentName);
 
@@ -164,24 +261,39 @@ export default class extends Generator {
       // Populate sandbox components
       // =============================================
       const shouldGenerateTemplates =
-        (mode === "new" && this.answers.createSandBox) || mode === "existing";
+        (mode === "new" && this.answers.createSandBox) ||
+        mode === "existing" ||
+        mode === "dependency_only";
 
       if (shouldGenerateTemplates) {
         this.log(`✅ Copying templates: ${componentName}`);
         const peerDepsToSync = [
           "react",
           "react-dom",
+          "react-router-dom",
           "react-datepicker",
           "react-select",
           "react-router",
           "prop-types",
           "date-fns",
+          "dayjs",
           "lucide-react",
           "@mui/material",
+          "@emotion/react",
+          "@emotion/styled",
           "framer-motion",
           "styled-components",
           "lodash",
+          "axios",
           "react-hot-toast",
+          "react-hook-form",
+          "zod",
+          "clsx",
+          "tailwind-merge",
+          "@tanstack/react-query",
+          "react-i18next",
+          "i18next",
+          "typescript",
         ];
         // Grab the actual versions from your D: drive
         const syncedVersions = getSourceVersions(
@@ -200,6 +312,15 @@ export default class extends Generator {
           `📦 Synced ${Object.keys(syncedVersions).length} peer dependencies from source.`,
         );
 
+        // For the template, we want the alias targets to point to src/relTarget
+        const templateAliasMap = {};
+        for (const [alias, relTarget] of Object.entries(aliasMap)) {
+          let normalizedRel = relTarget.replace(/^\.\/|\/$/g, "");
+          templateAliasMap[alias] = normalizedRel
+            ? (mode === "new" ? "src/" : "") + normalizedRel
+            : (mode === "new" ? "src" : "");
+        }
+
         if (mode === "new") {
           // Pass finalDeps to the Template
           this.fs.copyTpl(
@@ -217,6 +338,7 @@ export default class extends Generator {
           this.fs.copyTpl(
             this.templatePath("sandbox/vite.config.js"),
             path.join(finalTarget, "vite.config.js"),
+            { aliasMap: templateAliasMap },
           );
 
           this.fs.copyTpl(
@@ -253,16 +375,33 @@ export default class extends Generator {
           );
         }
 
-        this.fs.copyTpl(
-          this.templatePath("sandbox/Component.stories.jsx"),
-          path.join(finalTarget, `${componentName}.stories.jsx`),
-          {
-            componentName,
-            relativeComponentPath, // Point to the extracted location
-          },
-        );
+        // Generate jsconfig.json for new and dependency_only modes
+        if (mode === "new" || mode === "dependency_only") {
+          this.fs.copyTpl(
+            this.templatePath("sandbox/jsconfig.json"),
+            path.join(finalTarget, "jsconfig.json"),
+            { aliasMap: templateAliasMap },
+          );
+        }
+
+        // Stories are for new and existing modes
+        if (mode === "new" || mode === "existing") {
+          this.fs.copyTpl(
+            this.templatePath("sandbox/Component.stories.jsx"),
+            path.join(finalTarget, `${componentName}.stories.jsx`),
+            {
+              componentName,
+              relativeComponentPath, // Point to the extracted location
+            },
+          );
+        }
 
         await this.fs.commit(); // Forces Yeoman to write templates to disk NOW
+
+        // Post-process: Rewrite imports in the entire extraction directory
+        // to catch any templates or files that weren't caught by syncDependencies
+        this.log(`✨ Post-processing imports in ${extractionDir}...`);
+        rewriteImportsInDirectory(this, extractionDir, aliasMap, commonBase);
       }
     } catch (err) {
       if (err.code === "EPERM" || err.code === "EACCES") {
@@ -274,6 +413,7 @@ export default class extends Generator {
         process.exit(1);
       }
       this.log.error(`Failed to process reports: ${err.message}`);
+      console.error(err);
     }
   }
   async install() {
@@ -308,6 +448,16 @@ export default class extends Generator {
     this.log("=".repeat(40));
     this.log(`📍 Location: ${finalPath}`);
     this.log("=".repeat(40));
+
+    // Validate aliases
+    const validationResults = validateAliases(this, finalPath);
+    if (validationResults.details.length > 0) {
+      this.log("\n" + "=".repeat(40));
+      this.log("🔍 ALIAS VALIDATION REPORT");
+      this.log("=".repeat(40));
+      validationResults.details.forEach((detail) => this.log(detail));
+      this.log("=".repeat(40));
+    }
 
     if (this.answers.mode === "new" && this.answers.createSandBox) {
       this.log(`\nTo start your component, run:`);
