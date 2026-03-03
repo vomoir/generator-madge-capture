@@ -151,15 +151,16 @@ export const syncDependencies = (
         }
       }
 
-      // Matches any import/export from a string literal. 
-      // The [\s\S]*? handles potential multiline between import/export/from and the path
-      const importRegex = /(from|import|export)[\s\S]*?(['"])([^'"]+)(['"])/g;
+      // Matches any import/export from a string literal.
+      // Captures: (keyword)(content between keyword and quote)(quote)(path)(closing quote)
+      // This preserves destructured imports like { childNodeType } from '...'
+      const importRegex = /(from|import|export)([\s\S]*?)(['"])([^'"]+)\3/g;
 
       if (srcPath.match(/\.(js|jsx|ts|tsx)$/)) {
         const currentFileDir = path.dirname(relativePart);
 
         content = content.replace(importRegex, (match, p1, p2, p3, p4) => {
-          let importPath = p3;
+          let importPath = p4;
 
           // We only want to rewrite relative paths
           if (!importPath.startsWith("./") && !importPath.startsWith("../")) {
@@ -182,10 +183,10 @@ export const syncDependencies = (
 
           const aliased = tryAlias(normalizedResolvedPath, aliasMap);
           if (aliased) {
-            return `${p1} ${p2}${aliased}${p4}`;
+            return `${p1}${p2}${p3}${aliased}${p3}`;
           }
 
-          return `${p1} ${p2}${importPath}${p4}`;
+          return `${p1}${p2}${p3}${importPath}${p3}`;
         });
       }
 
@@ -230,10 +231,12 @@ const rewriteRecursive = (gen, rootDirectory, currentDir, aliasMap, commonBase) 
       const relativeToFile = path.relative(commonBase, fullPath).replace(/\\/g, "/");
       const relativeToRoot = path.dirname(relativeToFile);
 
-      const importRegex = /(from|import|export)[\s\S]*?(['"])([^'"]+)(['"])/g;
+      // Captures: (keyword)(content between keyword and quote)(quote)(path)
+      // This preserves destructured imports like { childNodeType } from '...'
+      const importRegex = /(from|import|export)([\s\S]*?)(['"])([^'"]+)\3/g;
 
       const newContent = content.replace(importRegex, (match, p1, p2, p3, p4) => {
-        let importPath = p3;
+        let importPath = p4;
         
         // We only want to rewrite relative paths
         if (!importPath.startsWith("./") && !importPath.startsWith("../")) {
@@ -245,7 +248,7 @@ const rewriteRecursive = (gen, rootDirectory, currentDir, aliasMap, commonBase) 
 
         const aliased = tryAlias(normalizedResolvedPath, aliasMap);
         if (aliased) {
-          return `${p1} ${p2}${aliased}${p4}`;
+          return `${p1}${p2}${p3}${aliased}${p3}`;
         }
 
         return match;
