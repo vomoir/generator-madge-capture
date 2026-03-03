@@ -14,6 +14,8 @@ import {
   findCommonBase,
   getSourceVersions,
   getSourceAliases,
+  generateAliasesFromStructure,
+  validateAliases,
   findProjectRoot,
 } from "./lib/extractComponents.js";
 import { getPrompts } from "./lib/prompts.js";
@@ -199,6 +201,18 @@ export default class extends Generator {
             }
           }
         });
+      }
+
+      // 3. Auto-generate aliases from folder structure if none were found
+      if (Object.keys(rawAliasMap).length === 0) {
+        rawAliasMap = generateAliasesFromStructure(commonBase, finalCopyList);
+        const generatedCount = Object.keys(rawAliasMap).length;
+        if (generatedCount > 0) {
+          this.log(`✨ Generated ${generatedCount} aliases from folder structure.`);
+          Object.entries(rawAliasMap).forEach(([alias, target]) => {
+            this.log(`   ${alias} -> ${target}`);
+          });
+        }
       }
 
       // 3. Normalize all alias targets relative to commonBase
@@ -387,7 +401,7 @@ export default class extends Generator {
         // Post-process: Rewrite imports in the entire extraction directory
         // to catch any templates or files that weren't caught by syncDependencies
         this.log(`✨ Post-processing imports in ${extractionDir}...`);
-        rewriteImportsInDirectory(this, extractionDir, aliasMap);
+        rewriteImportsInDirectory(this, extractionDir, aliasMap, commonBase);
       }
     } catch (err) {
       if (err.code === "EPERM" || err.code === "EACCES") {
@@ -434,6 +448,16 @@ export default class extends Generator {
     this.log("=".repeat(40));
     this.log(`📍 Location: ${finalPath}`);
     this.log("=".repeat(40));
+
+    // Validate aliases
+    const validationResults = validateAliases(this, finalPath);
+    if (validationResults.details.length > 0) {
+      this.log("\n" + "=".repeat(40));
+      this.log("🔍 ALIAS VALIDATION REPORT");
+      this.log("=".repeat(40));
+      validationResults.details.forEach((detail) => this.log(detail));
+      this.log("=".repeat(40));
+    }
 
     if (this.answers.mode === "new" && this.answers.createSandBox) {
       this.log(`\nTo start your component, run:`);

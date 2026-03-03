@@ -214,18 +214,20 @@ export const syncDependencies = (
  * @param {string} rootDirectory - The base directory to resolve everything relative to
  * @param {string} currentDir - The current directory being walked
  * @param {Object} aliasMap 
+ * @param {string} commonBase - The commonBase directory used to calculate aliasMap targets
  */
-const rewriteRecursive = (gen, rootDirectory, currentDir, aliasMap) => {
+const rewriteRecursive = (gen, rootDirectory, currentDir, aliasMap, commonBase) => {
   const files = fs.readdirSync(currentDir);
 
   files.forEach((file) => {
     const fullPath = path.join(currentDir, file);
     if (fs.lstatSync(fullPath).isDirectory()) {
-      rewriteRecursive(gen, rootDirectory, fullPath, aliasMap);
+      rewriteRecursive(gen, rootDirectory, fullPath, aliasMap, commonBase);
     } else if (fullPath.match(/\.(js|jsx|ts|tsx)$/)) {
       let content = fs.readFileSync(fullPath, "utf8");
       
-      const relativeToFile = path.relative(rootDirectory, fullPath).replace(/\\/g, "/");
+      // Measure the file's path relative to the commonBase (where aliasMap targets are defined)
+      const relativeToFile = path.relative(commonBase, fullPath).replace(/\\/g, "/");
       const relativeToRoot = path.dirname(relativeToFile);
 
       const importRegex = /(from|import|export)[\s\S]*?(['"])([^'"]+)(['"])/g;
@@ -238,7 +240,7 @@ const rewriteRecursive = (gen, rootDirectory, currentDir, aliasMap) => {
             return match;
         }
 
-        // Resolve the import path relative to the current file (relative to rootDirectory)
+        // Resolve the import path relative to the current file (relative to commonBase)
         const normalizedResolvedPath = path.posix.normalize(path.posix.join(relativeToRoot, importPath));
 
         const aliased = tryAlias(normalizedResolvedPath, aliasMap);
@@ -256,9 +258,9 @@ const rewriteRecursive = (gen, rootDirectory, currentDir, aliasMap) => {
   });
 };
 
-export const rewriteImportsInDirectory = (gen, directory, aliasMap) => {
+export const rewriteImportsInDirectory = (gen, directory, aliasMap, commonBase) => {
   if (Object.keys(aliasMap).length === 0) return;
-  rewriteRecursive(gen, directory, directory, aliasMap);
+  rewriteRecursive(gen, directory, directory, aliasMap, commonBase);
 };
 
 /**
@@ -408,6 +410,139 @@ export const getSourceAliases = (gen, startPath) => {
     gen.log.error(`❌ Error parsing ${foundPath}: ${err.message}`);
     return {};
   }
+};
+
+/**
+ * Auto-generates aliases from the discovered folder structure
+ * Analyzes the absolute file list and creates aliases for top-level directories
+ * that appear frequently in imports
+ * @param {string} commonBase - The common base directory
+ * @param {string[]} absolutePaths - Array of absolute paths to analyze
+ * @returns {Object} - Map of aliases to their absolute paths
+ */
+export const generateAliasesFromStructure = (commonBase, absolutePaths) => {
+  const aliases = {};
+  const dirCounts = {};
+  
+  // Count first-level directories under commonBase
+  absolutePaths.forEach((filePath) => {
+    const relative = path.relative(commonBase, filePath).replace(/\\/g, "/");
+    const parts = relative.split("/");
+    if (parts.length > 1) {
+      const firstDir = parts[0];
+      dirCounts[firstDir] = (dirCounts[firstDir] || 0) + 1;
+    }
+  });
+  
+  // Create aliases for directories with multiple files (appears frequently)
+  Object.entries(dirCounts).forEach(([dir, count]) => {
+    if (count >= 2) { // Only create aliases for dirs with 2+ files
+      const dirPath = path.resolve(commonBase, dir);
+      if (fs.existsSync(dirPath) && fs.lstatSync(dirPath).isDirectory()) {
+        aliases[`@${dir}`] = dirPath;
+      }
+    }
+  });
+  
+  return aliases;
+};
+
+/**
+ * Validates that aliases are properly configured and used in imports
+ * @param {Generator} gen - The Yeoman generator instance for logging
+ * @param {string} targetDirectory - The extraction directory to validate
+ * @returns {Object} - Validation results with summary and details
+ */
+export const validateAliases = (gen, targetDirectory) => {
+  const results = {
+    aliasesConfigured: false,
+    aliasCount: 0,
+    filesWithAliasedImports: 0,
+    filesWithRelativeImports: 0,
+    totalFilesScanned: 0,
+    details: []
+  };
+
+  try {
+    // 1. Check jsconfig.json
+    const jsconfigPath = path.join(targetDirectory, "jsconfig.json");
+    if (!fs.existsSync(jsconfigPath)) {
+      results.details.push("⚠️ No jsconfig.json found");
+      return results;
+    }
+
+    const jsconfigContent = fs.readFileSync(jsconfigPath, "utf8");
+    const jsconfig = JSON.parse(jsconfigContent);
+    const aliases = jsconfig?.compilerOptions?.paths || {};
+    const aliasKeys = Object.keys(aliases);
+
+    results.aliasesConfigured = aliasKeys.length > 0;
+    results.aliasCount = aliasKeys.length;
+
+    if (results.aliasCount === 0) {
+      results.details.push("⚠️ No aliases configured in jsconfig.json");
+      return results;
+    }
+
+    results.details.push(`✅ Found ${results.aliasCount} aliases configured:`);
+    aliasKeys.forEach((alias) => {
+      results.details.push(`   ${alias} -> ${aliases[alias][0]}`);
+    });
+
+    // 2. Scan all JS/JSX/TS/TSX files for import usage
+    const scanDirectory = (dir) => {
+      const files = fs.readdirSync(dir);
+      files.forEach((file) => {
+        const fullPath = path.join(dir, file);
+        const stat = fs.lstatSync(fullPath);
+
+        if (stat.isDirectory() && !["node_modules", "dist", ".storybook"].includes(file)) {
+          scanDirectory(fullPath);
+        } else if (stat.isFile() && fullPath.match(/\.(js|jsx|ts|tsx)$/)) {
+          results.totalFilesScanned++;
+          const content = fs.readFileSync(fullPath, "utf8");
+
+          // Check for aliased imports
+          const aliasedImports = [];
+          aliasKeys.forEach((alias) => {
+            const cleanAlias = alias.replace(/\/\*$/, "");
+            if (new RegExp(`from\\s+['"]${cleanAlias}[/'"]`).test(content)) {
+              aliasedImports.push(cleanAlias);
+            }
+          });
+
+          if (aliasedImports.length > 0) {
+            results.filesWithAliasedImports++;
+          }
+
+          // Check for relative imports (these might be fine, but worth noting)
+          if (/from\s+['"]\.\.?\//g.test(content)) {
+            results.filesWithRelativeImports++;
+          }
+        }
+      });
+    };
+
+    scanDirectory(targetDirectory);
+
+    results.details.push(`\n📊 Import Analysis:`);
+    results.details.push(`   Files scanned: ${results.totalFilesScanned}`);
+    results.details.push(`   Using aliases: ${results.filesWithAliasedImports}`);
+    if (results.filesWithRelativeImports > 0) {
+      results.details.push(`   Still using relative: ${results.filesWithRelativeImports}`);
+    }
+
+    if (results.filesWithAliasedImports > 0) {
+      results.details.push(`\n✨ Aliases are working!`);
+    } else if (results.filesWithRelativeImports > 0) {
+      results.details.push(`\n⚠️ Aliases configured but not yet used in imports`);
+    }
+
+  } catch (err) {
+    results.details.push(`❌ Validation error: ${err.message}`);
+  }
+
+  return results;
 };
 
 /**
